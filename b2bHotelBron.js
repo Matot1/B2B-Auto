@@ -71,7 +71,7 @@ async function fillTourist(page, index) {
   // Click "Вход" and login
   currentStep = 'Авторизация на сайте';
   if (!process.env.LOGIN || !process.env.PASSWORD) {
-    throw new Error('LOGIN или PASSWORD пустые. Запусти из B2BAutoSmoke-main или проверь .env рядом со скриптом.');
+    throw new Error('LOGIN или PASSWORD пустые. Запусти из b2bAuto или проверь .env рядом со скриптом.');
   }
   await page.locator('a.login-action:has-text("Вход")').click();
   await page.waitForTimeout(3000);
