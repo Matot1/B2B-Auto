@@ -2,10 +2,10 @@ const https = require('https');
 
 function sendMattermost(message) {
   return new Promise((resolve) => {
-    const webhookUrl = process.env.MATTERMOST_WEBHOOK;
+    const webhookUrl = process.env.BAND_WEBHOOK || process.env.MATTERMOST_WEBHOOK;
 
     if (!webhookUrl) {
-      console.error('MATTERMOST_WEBHOOK не задан в .env');
+      console.error('BAND_WEBHOOK / MATTERMOST_WEBHOOK не задан в .env');
       resolve();
       return;
     }
@@ -16,7 +16,7 @@ function sendMattermost(message) {
     const req = https.request(
       {
         hostname: url.hostname,
-        path: url.pathname,
+        path: url.pathname + url.search,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -28,9 +28,9 @@ function sendMattermost(message) {
         res.on('data', (chunk) => (body += chunk));
         res.on('end', () => {
           if (res.statusCode === 200) {
-            console.log('Уведомление отправлено в Mattermost');
+            console.log('Уведомление отправлено в Band');
           } else {
-            console.error('Ошибка Mattermost:', res.statusCode, body);
+            console.error('Ошибка Band:', res.statusCode, body);
           }
           resolve();
         });
@@ -38,7 +38,7 @@ function sendMattermost(message) {
     );
 
     req.on('error', (err) => {
-      console.error('Ошибка отправки в Mattermost:', err.message);
+      console.error('Ошибка отправки в Band:', err.message);
       resolve();
     });
     req.write(data);
@@ -46,4 +46,11 @@ function sendMattermost(message) {
   });
 }
 
-module.exports = { sendMattermost };
+async function notifyBron({ name, ok, orderNumber, claimUrl, step, error, url }) {
+  const lines = ok
+    ? [`✅ ${name}: бронь ок`, orderNumber ? `Заявка: ${orderNumber}` : null, claimUrl || null]
+    : [`❌ ${name}: ошибка`, step ? `Шаг: ${step}` : null, error || null, url || null];
+  await sendMattermost(lines.filter(Boolean).join('\n'));
+}
+
+module.exports = { sendMattermost, notifyBron };

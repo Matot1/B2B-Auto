@@ -4,6 +4,7 @@ const { faker } = require('@faker-js/faker/locale/ru');
 const { transliterate } = require('transliteration');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const { setDate: setZebraDate, setAvailableDate } = require('./object/zebraDatePicker.cjs');
+const { notifyBron } = require('./notify.cjs');
 
 async function fillTourist(page, index) {
   const prefix = `#tourist${index}`;
@@ -52,7 +53,10 @@ async function fillTourist(page, index) {
 }
 
 (async () => {
-  const browser = await chromium.launch({ headless: false });
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-dev-shm-usage'],
+  });
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
     locale: 'ru-RU',
@@ -191,10 +195,6 @@ async function fillTourist(page, index) {
     throw new Error(`выбрана неподходящая дата тура. Ожидалось: ${selectedCheckin}, получено: ${actualCheckin || 'не найдена'}`);
   }
 
-  // Open DevTools and switch to Network tab
-  await targetPage.keyboard.press('F12');
-  await targetPage.waitForTimeout(1000);
-
   // Fill tourist 1 data
   currentStep = 'Заполнение данных туриста 1';
   await fillTourist(targetPage, 1);
@@ -266,10 +266,12 @@ async function fillTourist(page, index) {
     return '';
   });
   console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
+  await notifyBron({ name: 'Hotel', ok: true, orderNumber, claimUrl });
 
   await browser.close();
   } catch (err) {
     const pageUrl = typeof page !== 'undefined' ? await page.evaluate(() => location.href).catch(() => 'недоступен') : 'недоступен';
     console.error(`❌ Ошибка на шаге "${currentStep}": ${err.message}\nURL: ${pageUrl}`);
+    await notifyBron({ name: 'Hotel', ok: false, step: currentStep, error: err.message, url: pageUrl });
   }
 })();

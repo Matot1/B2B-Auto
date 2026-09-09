@@ -3,6 +3,7 @@ const { faker } = require('@faker-js/faker/locale/ru');
 const { transliterate } = require('transliteration');
 require('dotenv').config();
 const { setDate: setZebraDate, setAvailableDate } = require('./object/zebraDatePicker.cjs');
+const { notifyBron } = require('./notify.cjs');
 
 async function fillTourist(page, index) {
   const prefix = `#tourist${index}`;
@@ -51,7 +52,10 @@ async function fillTourist(page, index) {
 }
 
 (async () => {
-  const browser = await chromium.launch({ headless: false });
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-dev-shm-usage'],
+  });
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
     locale: 'ru-RU',
@@ -217,10 +221,6 @@ async function fillTourist(page, index) {
   await flightRadio.check({ force: true });
   await targetPage.waitForTimeout(1000);
 
-  // Open DevTools and switch to Network tab
-  await targetPage.keyboard.press('F12');
-  await targetPage.waitForTimeout(1000);
-
   // Fill tourist 1 data
   currentStep = 'Заполнение данных туриста 1';
   await fillTourist(targetPage, 1);
@@ -280,12 +280,11 @@ async function fillTourist(page, index) {
     console.log('Не удалось проверить результат, URL:', targetPage.url());
   }
 
+  await notifyBron({ name: 'GDS', ok: orderNumber !== 'не найден', orderNumber, claimUrl });
   await browser.close();
   } catch (err) {
     const pageUrl = typeof page !== 'undefined' ? await page.evaluate(() => location.href).catch(() => 'недоступен') : 'недоступен';
     console.error(`❌ Ошибка на шаге "${currentStep}": ${err.message}\nURL: ${pageUrl}`);
-    if (typeof page !== 'undefined') {
-      await page.waitForTimeout(300000).catch(() => {});
-    }
+    await notifyBron({ name: 'GDS', ok: false, step: currentStep, error: err.message, url: pageUrl });
   }
 })();

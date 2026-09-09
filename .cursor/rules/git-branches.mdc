@@ -1,0 +1,30 @@
+---
+description: Какая git-ветка соответствует какой папке тестов
+alwaysApply: true
+---
+
+# Ветки и папки B2B-Auto
+
+Репозиторий: `https://github.com/Matot1/B2B-Auto`  
+Рабочая копия git: `b2bAuto/`
+
+| Ветка | Папка / смысл | Когда использовать |
+|---|---|---|
+| `main` | `b2bAuto` | канон на Mac, ручной прогон с браузером |
+| `smoke` | `SmokeTest` | smoke после ревизии |
+| `lab` | `GitLabTest` | прогон в GitLab |
+
+## Как править
+
+1. Правки для канона — на `main`, в `b2bAuto/`.
+2. Правки для smoke — `git checkout smoke` (не копировать файлы из папки `SmokeTest`).
+3. Правки для GitLab — `git checkout lab` (не копировать файлы из папки `GitLabTest`).
+4. Не держать три расходящиеся копии одних и тех же `b2b*.js` без commit в свою ветку.
+5. Папки `SmokeTest/` и `GitLabTest/` в `ai job` **не удалять**. Они остаются на диске.
+
+```bash
+cd b2bAuto
+git checkout main    # канон
+git checkout smoke   # smoke
+git checkout lab     # GitLab
+```

@@ -130,6 +130,61 @@ async function ensureBackFreightClass(page) {
   }
 }
 
+async function pickFreightWithSeats(page, selector, label) {
+  const hasSeatsRe = /есть\s+места/i;
+  const { container, texts } = await listChosenOptions(page, selector);
+  console.log(`${label}:`, texts.join(' | ') || 'пусто');
+  const good = texts.find((t) => hasSeatsRe.test(t));
+  if (!good) {
+    throw new Error(`${label}: нет строк с «есть места». Доступно: ${texts.join(' | ') || 'пусто'}`);
+  }
+  const option = container.locator('li.active-result').filter({ hasText: good }).first();
+  await option.waitFor({ state: 'visible', timeout: 30000 });
+  await option.click({ force: true });
+  await page.keyboard.press('Escape');
+  await waitAfterAction(page, 400);
+  console.log(`${label} выбран:`, good);
+}
+
+async function ensureOutboundFreightFilters(page) {
+  await page.locator('#ORDER_TOWNTO_chosen').waitFor({ state: 'visible', timeout: 60000 });
+  await waitAfterAction(page, 1500);
+
+  const townTo = await getChosenDisplay(page, '#ORDER_TOWNTO_chosen');
+  const classInc = await getChosenDisplay(page, '#ORDER_CLASSINC_chosen');
+  const placeInc = await getChosenDisplay(page, '#ORDER_FRPLACEINC_chosen');
+  const freightInc = await getChosenDisplay(page, '#ORDER_FREIGHTINC_chosen');
+  const hasSeatsRe = /есть\s+места/i;
+
+  console.log('Город прилета:', isChosenEmpty(townTo) ? 'пусто' : townTo);
+  console.log('Класс мест:', isChosenEmpty(classInc) ? 'пусто' : classInc);
+  console.log('Размещение:', isChosenEmpty(placeInc) ? 'пусто' : placeInc);
+  console.log('Транспорт:', isChosenEmpty(freightInc) ? 'пусто' : freightInc);
+
+  const allFilled = !isChosenEmpty(townTo)
+    && !isChosenEmpty(classInc)
+    && !isChosenEmpty(placeInc)
+    && !isChosenEmpty(freightInc);
+
+  if (allFilled) {
+    console.log('Фильтры транспорта уже заполнены — идём дальше');
+    return;
+  }
+
+  if (isChosenEmpty(townTo)) {
+    await selectChosen(page, '#ORDER_TOWNTO_chosen', 'Хургада');
+  }
+  if (isChosenEmpty(classInc)) {
+    await selectChosen(page, '#ORDER_CLASSINC_chosen', 'ECONOM');
+  }
+  if (isChosenEmpty(placeInc)) {
+    await selectChosen(page, '#ORDER_FRPLACEINC_chosen', 'Стандартное');
+  }
+  if (isChosenEmpty(freightInc) || !hasSeatsRe.test(freightInc)) {
+    await pickFreightWithSeats(page, '#ORDER_FREIGHTINC_chosen', 'Транспорт');
+  }
+}
+
 async function ensureBackFreightWithSeats(page) {
   const backCb = page.locator('#ORDER_BACK_FREIGHT_ENABLE');
   if (await backCb.count() && !(await backCb.isChecked())) {
@@ -240,7 +295,10 @@ async function checkFreightOrderFields(page) {
 }
 
 (async () => {
-  const browser = await chromium.launch({ headless: false });
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-dev-shm-usage'],
+  });
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
     locale: 'ru-RU',
@@ -497,6 +555,9 @@ async function checkFreightOrderFields(page) {
   currentStep = 'Выбор города вылета Москва';
   await page.locator('#ORDER_TOWNFROM_chosen').waitFor({ state: 'visible', timeout: 60000 });
   await selectChosen(page, '#ORDER_TOWNFROM_chosen', 'Москва');
+
+  currentStep = 'Проверка фильтров транспорта туда';
+  await ensureOutboundFreightFilters(page);
 
   currentStep = 'Выбор класса мест ECONOM';
   const backFreightCb = page.locator('#ORDER_BACK_FREIGHT_ENABLE');
