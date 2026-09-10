@@ -101,9 +101,9 @@ async function fillTourist(page, index) {
   await page.locator('.FREIGHTTYPE_chosen .active-result:has-text("GDS")').click();
   await page.waitForTimeout(5000);
 
-  // Select tour "Turkey Alanya MOW GDS (GZP)"
-  currentStep = 'Выбор тура Turkey Alanya MOW GDS (GZP)';
-  const tourName = 'Turkey Alanya MOW GDS (GZP)';
+  // Select tour "Turkey Antalya MOW GDS*"
+  currentStep = 'Выбор тура Turkey Antalya MOW GDS*';
+  const tourName = 'Turkey Antalya MOW GDS*';
   await page.locator('.TOURINC_chosen .chosen-single').scrollIntoViewIfNeeded();
   await page.waitForTimeout(300);
   await page.locator('.TOURINC_chosen .chosen-single').click();
@@ -111,7 +111,7 @@ async function fillTourist(page, index) {
 
   const tourSearch = page.locator('.TOURINC_chosen .chosen-search input');
   if (await tourSearch.count()) {
-    await tourSearch.fill('Alanya MOW GDS');
+    await tourSearch.fill(tourName);
     await page.waitForTimeout(800);
   }
 
@@ -257,30 +257,29 @@ async function fillTourist(page, index) {
   // Click "бронировать" button
   currentStep = 'Бронирование';
   await targetPage.locator('button:has-text("бронировать")').click();
-  await targetPage.waitForTimeout(90000);
 
-  // Check for order number on the page
+  currentStep = 'Ожидание номера заявки';
+  await targetPage.waitForFunction(
+    () => /Номер вашей заявки:\s*\d+/.test(document.body.innerText),
+    { timeout: 90000 },
+  );
+
   let orderNumber = 'не найден';
   let claimUrl = '';
-  try {
-    const pageText = await targetPage.evaluate(() => document.body.innerText);
-    const numMatch = pageText.match(/Номер вашей заявки:\s*(\d+)/);
-    if (numMatch) orderNumber = numMatch[1];
+  const pageText = await targetPage.evaluate(() => document.body.innerText);
+  const numMatch = pageText.match(/Номер вашей заявки:\s*(\d+)/);
+  if (numMatch) orderNumber = numMatch[1];
 
-    // Get the claim URL from the modal link
-    claimUrl = await targetPage.evaluate(() => {
-      const links = document.querySelectorAll('a');
-      for (const a of links) {
-        if (a.textContent.includes('Посмотреть заявку')) return a.href;
-      }
-      return '';
-    });
-    console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
-  } catch (e) {
-    console.log('Не удалось проверить результат, URL:', targetPage.url());
-  }
+  claimUrl = await targetPage.evaluate(() => {
+    const links = document.querySelectorAll('a');
+    for (const a of links) {
+      if (a.textContent.includes('Посмотреть заявку')) return a.href;
+    }
+    return '';
+  });
+  console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
+  await notifyBron({ name: 'GDS', ok: true, orderNumber, claimUrl });
 
-  await notifyBron({ name: 'GDS', ok: orderNumber !== 'не найден', orderNumber, claimUrl });
   await browser.close();
   } catch (err) {
     const pageUrl = typeof page !== 'undefined' ? await page.evaluate(() => location.href).catch(() => 'недоступен') : 'недоступен';
