@@ -3,6 +3,7 @@ const { faker } = require('@faker-js/faker/locale/ru');
 const { transliterate } = require('transliteration');
 require('dotenv').config();
 const { setAvailableDate, setDateDirect } = require('./object/zebraDatePicker.cjs');
+const { notifyBron } = require('./notify.cjs');
 
 function chosenContainer(page, selectName) {
   return page.locator(`select[name="${selectName}"]`)
@@ -359,7 +360,16 @@ async function resolveBronPage(context, page) {
     const btn = document.querySelector('#bron_info > div.top_container > div.PRICEINFO > fieldset > table:nth-child(4) > tbody > tr:nth-child(4) > td > button.bron');
     return btn && !btn.disabled;
   }, { timeout: 60000 });
-  await clickAndWait(targetPage, bookBtn);
+  await bookBtn.click();
+
+  currentStep = 'Подтверждение условий';
+  const agreementBtn = targetPage.locator('#agreement');
+  const agreementVisible = await agreementBtn.isVisible().catch(() => false);
+  if (agreementVisible) {
+    await agreementBtn.click();
+  } else {
+    console.log('Кнопка #agreement нет — жду номер заявки');
+  }
 
   currentStep = 'Ожидание номера заявки';
   await targetPage.waitForFunction(
@@ -381,6 +391,7 @@ async function resolveBronPage(context, page) {
     return '';
   });
   console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
+  await notifyBron({ name: 'CharterBY', ok: true, orderNumber, claimUrl });
 
   await browser.close();
   } catch (err) {
@@ -390,6 +401,7 @@ async function resolveBronPage(context, page) {
       if (activePage && !activePage.isClosed()) pageUrl = activePage.url();
     } catch (_) {}
     console.error(`❌ Ошибка на шаге "${currentStep}": ${err.message}\nURL: ${pageUrl}`);
+    await notifyBron({ name: 'CharterBY', ok: false, step: currentStep, error: err.message, url: pageUrl });
     try {
       const activePage = targetPage && !targetPage.isClosed() ? targetPage : page;
       if (activePage && !activePage.isClosed()) await activePage.waitForTimeout(300000);
