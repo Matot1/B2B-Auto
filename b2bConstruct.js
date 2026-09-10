@@ -45,6 +45,49 @@ async function selectChosen(page, containerSelector, optionText) {
   }
 }
 
+async function selectChosenFirst(page, containerSelector) {
+  const container = page.locator(containerSelector);
+  const trigger = container.locator('a.chosen-single').first();
+  await trigger.waitFor({ state: 'visible', timeout: 30000 });
+  await trigger.scrollIntoViewIfNeeded();
+  await page.keyboard.press('Escape');
+  await waitAfterAction(page, 400);
+  await trigger.click({ force: true });
+  await page.waitForFunction((sel) => {
+    const el = document.querySelector(sel);
+    return Boolean(el && el.classList.contains('chosen-with-drop')
+      && el.querySelectorAll('li.active-result').length > 0);
+  }, containerSelector, { timeout: 30000 });
+
+  const picked = await page.evaluate((sel) => {
+    const box = document.querySelector(sel);
+    if (!box) return '';
+    const items = [...box.querySelectorAll('li.active-result')];
+    const first = items.find((li) => {
+      const text = (li.textContent || '').replace(/\s+/g, ' ').trim();
+      return text && !/^[-—–]+$/.test(text);
+    }) || items[0];
+    if (!first) return '';
+    first.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    first.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    first.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    if (window.jQuery) {
+      window.jQuery(first).mouseup();
+    }
+    return (first.textContent || '').replace(/\s+/g, ' ').trim();
+  }, containerSelector);
+
+  await page.keyboard.press('Escape');
+  await waitAfterAction(page, 800);
+  if (!picked) {
+    throw new Error(`${containerSelector}: в списке нет пунктов`);
+  }
+  const display = (await trigger.innerText()).replace(/\s+/g, ' ').trim();
+  if (isChosenEmpty(display)) {
+    throw new Error(`${containerSelector}: первый пункт не выбрался (было "${picked}")`);
+  }
+}
+
 function addDays(dateStr, days) {
   const [day, month, year] = dateStr.split('.').map(Number);
   const date = new Date(year, month - 1, day + days);
@@ -127,61 +170,6 @@ async function ensureBackFreightClass(page) {
       throw new Error(`Класс мест ECONOM нет для выбора за 7 дат. Доступно: ${texts.join(' | ') || 'пусто'}`);
     }
     await pickPrevBackFreightDate(page);
-  }
-}
-
-async function pickFreightWithSeats(page, selector, label) {
-  const hasSeatsRe = /есть\s+места/i;
-  const { container, texts } = await listChosenOptions(page, selector);
-  console.log(`${label}:`, texts.join(' | ') || 'пусто');
-  const good = texts.find((t) => hasSeatsRe.test(t));
-  if (!good) {
-    throw new Error(`${label}: нет строк с «есть места». Доступно: ${texts.join(' | ') || 'пусто'}`);
-  }
-  const option = container.locator('li.active-result').filter({ hasText: good }).first();
-  await option.waitFor({ state: 'visible', timeout: 30000 });
-  await option.click({ force: true });
-  await page.keyboard.press('Escape');
-  await waitAfterAction(page, 400);
-  console.log(`${label} выбран:`, good);
-}
-
-async function ensureOutboundFreightFilters(page) {
-  await page.locator('#ORDER_TOWNTO_chosen').waitFor({ state: 'visible', timeout: 60000 });
-  await waitAfterAction(page, 1500);
-
-  const townTo = await getChosenDisplay(page, '#ORDER_TOWNTO_chosen');
-  const classInc = await getChosenDisplay(page, '#ORDER_CLASSINC_chosen');
-  const placeInc = await getChosenDisplay(page, '#ORDER_FRPLACEINC_chosen');
-  const freightInc = await getChosenDisplay(page, '#ORDER_FREIGHTINC_chosen');
-  const hasSeatsRe = /есть\s+места/i;
-
-  console.log('Город прилета:', isChosenEmpty(townTo) ? 'пусто' : townTo);
-  console.log('Класс мест:', isChosenEmpty(classInc) ? 'пусто' : classInc);
-  console.log('Размещение:', isChosenEmpty(placeInc) ? 'пусто' : placeInc);
-  console.log('Транспорт:', isChosenEmpty(freightInc) ? 'пусто' : freightInc);
-
-  const allFilled = !isChosenEmpty(townTo)
-    && !isChosenEmpty(classInc)
-    && !isChosenEmpty(placeInc)
-    && !isChosenEmpty(freightInc);
-
-  if (allFilled) {
-    console.log('Фильтры транспорта уже заполнены — идём дальше');
-    return;
-  }
-
-  if (isChosenEmpty(townTo)) {
-    await selectChosen(page, '#ORDER_TOWNTO_chosen', 'Хургада');
-  }
-  if (isChosenEmpty(classInc)) {
-    await selectChosen(page, '#ORDER_CLASSINC_chosen', 'ECONOM');
-  }
-  if (isChosenEmpty(placeInc)) {
-    await selectChosen(page, '#ORDER_FRPLACEINC_chosen', 'Стандартное');
-  }
-  if (isChosenEmpty(freightInc) || !hasSeatsRe.test(freightInc)) {
-    await pickFreightWithSeats(page, '#ORDER_FREIGHTINC_chosen', 'Транспорт');
   }
 }
 
@@ -552,12 +540,9 @@ async function checkFreightOrderFields(page) {
   await freightOrderBtn.waitFor({ state: 'visible', timeout: 30000 });
   await freightOrderBtn.click();
 
-  currentStep = 'Выбор города вылета Москва';
+  currentStep = 'Выбор города вылета';
   await page.locator('#ORDER_TOWNFROM_chosen').waitFor({ state: 'visible', timeout: 60000 });
-  await selectChosen(page, '#ORDER_TOWNFROM_chosen', 'Москва');
-
-  currentStep = 'Проверка фильтров транспорта туда';
-  await ensureOutboundFreightFilters(page);
+  await selectChosenFirst(page, '#ORDER_TOWNFROM_chosen');
 
   currentStep = 'Выбор класса мест ECONOM';
   const backFreightCb = page.locator('#ORDER_BACK_FREIGHT_ENABLE');
