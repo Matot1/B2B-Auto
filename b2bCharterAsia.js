@@ -53,49 +53,37 @@ async function fillTourist(page, index) {
   const prefix = `frm[People][${index}]`;
   await page.locator(`#tourist${index}`).scrollIntoViewIfNeeded();
 
-  console.log(`Турист ${index}: MR/MRS/CHD/INF`);
   await selectChosenByName(page, `${prefix}[HUMAN]`, 'MRS');
 
-  console.log(`Турист ${index}: фамилия`);
   await fillInputValue(
     page.locator(`input[name="${prefix}[LASTNAME_LNAME]"]`),
     transliterate(faker.person.lastName()).toUpperCase(),
   );
 
-  console.log(`Турист ${index}: имя`);
   await fillInputValue(
     page.locator(`input[name="${prefix}[FIRSTNAME_LNAME]"]`),
     transliterate(faker.person.firstName()).toUpperCase(),
   );
 
-  console.log(`Турист ${index}: дата рождения`);
   await setDateDirect(page, `${prefix}[BORN]`, '01.01.2000');
 
-  console.log(`Турист ${index}: гражданство`);
   await selectChosenByName(page, `${prefix}[NATIONALITY]`, 'Россия');
 
-  console.log(`Турист ${index}: тип документа`);
   await selectChosenByName(page, `${prefix}[IDENTITY_DOCUMENT]`, 'Заграничный паспорт');
 
-  console.log(`Турист ${index}: серия документа`);
   await fillInputValue(page.locator(`input[name="${prefix}[PSERIE]"]`), faker.string.numeric(2));
 
-  console.log(`Турист ${index}: номер документа`);
   await fillInputValue(page.locator(`input[name="${prefix}[PNUMBER]"]`), faker.string.numeric(7));
 
-  console.log(`Турист ${index}: срок действия`);
   await setDateDirect(page, `${prefix}[PVALID]`, '01.01.2031');
 
-  console.log(`Турист ${index}: документ выдан`);
   await setDateDirect(page, `${prefix}[PGIVEN]`, '10.10.2024');
 
-  console.log(`Турист ${index}: кем выдан`);
   await fillInputValue(
     page.locator(`input[name="${prefix}[PGIVENORG]"]`),
     faker.string.alphanumeric({ length: 8, casing: 'upper' }),
   );
 
-  console.log(`Турист ${index}: виза`);
   await selectChosenByName(page, `VISA[${index}]`, 'Своя виза');
 }
 
