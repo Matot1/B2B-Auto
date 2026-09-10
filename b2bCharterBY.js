@@ -56,58 +56,45 @@ async function fillTourist(page, index) {
   const lastNameRu = faker.person.lastName();
   const firstNameRu = faker.person.firstName();
 
-  console.log(`Турист ${index}: MR/MRS/CHD/INF`);
   await selectChosenByName(page, `${prefix}[HUMAN]`, 'MRS');
 
-  console.log(`Турист ${index}: фамилия`);
   await fillInputValue(
     page.locator(`input[name="${prefix}[LASTNAME_LNAME]"]`),
     transliterate(lastNameRu).toUpperCase(),
   );
 
-  console.log(`Турист ${index}: имя`);
   await fillInputValue(
     page.locator(`input[name="${prefix}[FIRSTNAME_LNAME]"]`),
     transliterate(firstNameRu).toUpperCase(),
   );
 
-  console.log(`Турист ${index}: фамилия (как в документе)`);
   await fillInputValue(
     page.locator(`input[name="${prefix}[LASTNAME_NAME]"]`),
     lastNameRu,
   );
 
-  console.log(`Турист ${index}: имя по-русски`);
   await fillInputValue(
     page.locator(`input[name="${prefix}[FIRSTNAME_NAME]"]`),
     firstNameRu,
   );
 
-  console.log(`Турист ${index}: ИНН`);
   await fillInputValue(
     page.locator(`input[name="${prefix}[INN]"]`),
     '0700014746',
   );
 
-  console.log(`Турист ${index}: дата рождения`);
   await setDateDirect(page, `${prefix}[BORN]`, '01.01.2000');
 
-  console.log(`Турист ${index}: гражданство`);
   await selectChosenByName(page, `${prefix}[NATIONALITY]`, 'Беларусь');
 
-  console.log(`Турист ${index}: тип документа`);
   await selectChosenByName(page, `${prefix}[IDENTITY_DOCUMENT]`, 'Заграничный паспорт');
 
-  console.log(`Турист ${index}: серия документа`);
   await fillInputValue(page.locator(`input[name="${prefix}[PSERIE]"]`), faker.string.alpha({ length: 2, casing: 'upper' }));
 
-  console.log(`Турист ${index}: номер документа`);
   await fillInputValue(page.locator(`input[name="${prefix}[PNUMBER]"]`), faker.string.numeric(7));
 
-  console.log(`Турист ${index}: срок действия`);
   await setDateDirect(page, `${prefix}[PVALID]`, '01.01.2031');
 
-  console.log(`Турист ${index}: документ выдан`);
   await setDateDirect(page, `${prefix}[PGIVEN]`, '10.10.2024');
 }
 
@@ -115,50 +102,42 @@ async function fillBuyer(page) {
   const lastNameRu = faker.person.lastName();
   const firstNameRu = faker.person.firstName();
 
-  console.log('Покупатель: фамилия (как в документе)');
   await fillInputValue(
     page.locator('#bron_info > div.top_container > div.CLAIMINFO.WITHBUYER > div.left_block.BUYERINFO > fieldset > table > tbody > tr:nth-child(1) > td:nth-child(2) > input'),
     transliterate(lastNameRu).toUpperCase(),
   );
 
-  console.log('Покупатель: имя (как в документе)');
   await fillInputValue(
     page.locator('#bron_info > div.top_container > div.CLAIMINFO.WITHBUYER > div.left_block.BUYERINFO > fieldset > table > tbody > tr:nth-child(2) > td:nth-child(2) > input'),
     transliterate(firstNameRu).toUpperCase(),
   );
 
-  console.log('Покупатель: адрес');
   await fillInputValue(
     page.locator('#bron_info > div.top_container > div.CLAIMINFO.WITHBUYER > div.left_block.BUYERINFO > fieldset > table > tbody > tr:nth-child(6) > td:nth-child(2) > input'),
     faker.location.city(),
   );
 
-  console.log('Покупатель: серия паспорта');
   await fillInputValue(
     page.locator('#bron_info > div.top_container > div.CLAIMINFO.WITHBUYER > div.left_block.BUYERINFO > fieldset > table > tbody > tr:nth-child(7) > td:nth-child(2) > input'),
     faker.string.numeric(4),
   );
 
-  console.log('Покупатель: номер паспорта');
   await fillInputValue(
     page.locator('#bron_info > div.top_container > div.CLAIMINFO.WITHBUYER > div.left_block.BUYERINFO > fieldset > table > tbody > tr:nth-child(8) > td:nth-child(2) > input'),
     faker.string.numeric(6),
   );
 
-  console.log('Покупатель: e-mail');
   await fillInputValue(
     page.locator('#bron_info > div.top_container > div.CLAIMINFO.WITHBUYER > div.left_block.BUYERINFO > fieldset > table > tbody > tr:nth-child(10) > td:nth-child(2) > input'),
     `${faker.string.alphanumeric({ length: 10, casing: 'lower' })}@mail.ru`,
   );
 
-  console.log('Покупатель: гражданство');
   await selectChosenOption(
     page,
     page.locator('#bron_info > div.top_container > div.CLAIMINFO.WITHBUYER > div.left_block.BUYERINFO > fieldset > table > tbody > tr:nth-child(11) > td:nth-child(2) > div > a'),
     'Беларусь',
   );
 
-  console.log('Покупатель: тип документа');
   await selectChosenOption(
     page,
     page.locator('#bron_info > div.top_container > div.CLAIMINFO.WITHBUYER > div.left_block.BUYERINFO > fieldset > table > tbody > tr:nth-child(12) > td:nth-child(2) > div > a'),
