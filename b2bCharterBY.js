@@ -85,11 +85,11 @@ async function fillTourist(page, index) {
 
   await setDateDirect(page, `${prefix}[BORN]`, '01.01.2000');
 
-  await selectChosenByName(page, `${prefix}[NATIONALITY]`, 'Беларусь');
+  await selectChosenByName(page, `${prefix}[NATIONALITY]`, 'Россия');
 
   await selectChosenByName(page, `${prefix}[IDENTITY_DOCUMENT]`, 'Заграничный паспорт');
 
-  await fillInputValue(page.locator(`input[name="${prefix}[PSERIE]"]`), faker.string.alpha({ length: 2, casing: 'upper' }));
+  await fillInputValue(page.locator(`input[name="${prefix}[PSERIE]"]`), faker.string.numeric(2));
 
   await fillInputValue(page.locator(`input[name="${prefix}[PNUMBER]"]`), faker.string.numeric(7));
 
