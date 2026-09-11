@@ -383,9 +383,5 @@ async function resolveBronPage(context, page) {
     } catch (_) {}
     console.error(`❌ Ошибка на шаге "${currentStep}": ${err.message}\nURL: ${pageUrl}`);
     await notifyBron({ name: 'CharterBY', ok: false, step: currentStep, error: err.message, url: pageUrl });
-    try {
-      const activePage = targetPage && !targetPage.isClosed() ? targetPage : page;
-      if (activePage && !activePage.isClosed()) await activePage.waitForTimeout(300000);
-    } catch (_) {}
   }
 })();
