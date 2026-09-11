@@ -338,10 +338,11 @@ async function resolveBronPage(context, page) {
   await targetPage.waitForFunction(() => {
     const btn = document.querySelector('#bron_info > div.top_container > div.PRICEINFO > fieldset > table:nth-child(4) > tbody > tr:nth-child(4) > td > button.bron');
     return btn && !btn.disabled;
-  }, { timeout: 60000 });
+  }, null, { timeout: 60000 });
   await bookBtn.click();
 
   currentStep = 'Подтверждение условий';
+  await targetPage.waitForTimeout(2000);
   const agreementBtn = targetPage.locator('#agreement');
   const agreementVisible = await agreementBtn.isVisible().catch(() => false);
   if (agreementVisible) {
@@ -353,6 +354,7 @@ async function resolveBronPage(context, page) {
   currentStep = 'Ожидание номера заявки';
   await targetPage.waitForFunction(
     () => /Номер вашей заявки:\s*\d+/.test(document.body.innerText),
+    null,
     { timeout: 90000 },
   );
 
