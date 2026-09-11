@@ -85,11 +85,11 @@ async function fillTourist(page, index) {
 
   await setDateDirect(page, `${prefix}[BORN]`, '01.01.2000');
 
-  await selectChosenByName(page, `${prefix}[NATIONALITY]`, 'Беларусь');
+  await selectChosenByName(page, `${prefix}[NATIONALITY]`, 'Россия');
 
   await selectChosenByName(page, `${prefix}[IDENTITY_DOCUMENT]`, 'Заграничный паспорт');
 
-  await fillInputValue(page.locator(`input[name="${prefix}[PSERIE]"]`), faker.string.alpha({ length: 2, casing: 'upper' }));
+  await fillInputValue(page.locator(`input[name="${prefix}[PSERIE]"]`), faker.string.numeric(2));
 
   await fillInputValue(page.locator(`input[name="${prefix}[PNUMBER]"]`), faker.string.numeric(7));
 
@@ -341,21 +341,27 @@ async function resolveBronPage(context, page) {
   await targetPage.waitForFunction(() => {
     const btn = document.querySelector('#bron_info > div.top_container > div.PRICEINFO > fieldset > table:nth-child(4) > tbody > tr:nth-child(4) > td > button.bron');
     return btn && !btn.disabled;
-  }, { timeout: 60000 });
-  await bookBtn.click();
+  }, null, { timeout: 60000 });
+  await clickAndWait(targetPage, bookBtn);
 
   currentStep = 'Подтверждение условий';
   const agreementBtn = targetPage.locator('#agreement');
-  const agreementVisible = await agreementBtn.isVisible().catch(() => false);
-  if (agreementVisible) {
-    await agreementBtn.click();
-  } else {
-    console.log('Кнопка #agreement нет — жду номер заявки');
+  await Promise.race([
+    agreementBtn.waitFor({ state: 'visible', timeout: 20000 }),
+    targetPage.waitForFunction(
+      () => /Номер вашей заявки:\s*\d+/.test(document.body.innerText) || /CLAIM=\d+/i.test(location.href),
+      null,
+      { timeout: 20000 },
+    ),
+  ]).catch(() => {});
+  if (await agreementBtn.isVisible().catch(() => false)) {
+    await clickAndWait(targetPage, agreementBtn);
   }
 
   currentStep = 'Ожидание номера заявки';
   await targetPage.waitForFunction(
-    () => /Номер вашей заявки:\s*\d+/.test(document.body.innerText),
+    () => /Номер вашей заявки:\s*\d+/.test(document.body.innerText) || /CLAIM=\d+/i.test(location.href),
+    null,
     { timeout: 90000 },
   );
 
@@ -364,6 +370,10 @@ async function resolveBronPage(context, page) {
   const pageText = await targetPage.evaluate(() => document.body.innerText);
   const numMatch = pageText.match(/Номер вашей заявки:\s*(\d+)/);
   if (numMatch) orderNumber = numMatch[1];
+  if (orderNumber === 'не найден') {
+    const urlMatch = targetPage.url().match(/CLAIM=(\d+)/i);
+    if (urlMatch) orderNumber = urlMatch[1];
+  }
 
   claimUrl = await targetPage.evaluate(() => {
     const links = document.querySelectorAll('a');
