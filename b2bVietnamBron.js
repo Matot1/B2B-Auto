@@ -3,7 +3,7 @@ const { faker } = require('@faker-js/faker/locale/ru');
 const { transliterate } = require('transliteration');
 require('dotenv').config();
 const { setDate: setZebraDate, setAvailableDate } = require('./object/zebraDatePicker.cjs');
-const { notifyBron } = require('./notify.cjs');
+// const { notifyBron } = require('./notify.cjs');
 
 async function fillTourist(page, index) {
   const prefix = `#tourist${index}`;
@@ -73,7 +73,10 @@ async function resolveBronPage(context, page) {
 }
 
 (async () => {
-  const browser = await chromium.launch({ headless: false });
+  const browser = await chromium.launch({
+    headless: false,
+    args: ['--no-sandbox', '--disable-dev-shm-usage'],
+  });
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
     locale: 'ru-RU',
@@ -132,25 +135,6 @@ async function resolveBronPage(context, page) {
   await page.locator('.FREIGHTTYPE_chosen .active-result:has-text("Чартер/блочная перевозка")').click();
   await page.keyboard.press('Escape');
   await page.waitForTimeout(2000);
-
-  currentStep = 'Выбор тура Vietnam MOW-CXR AZUR new';
-  await page.locator('.TOURINC_chosen .chosen-single').scrollIntoViewIfNeeded();
-  await page.waitForTimeout(300);
-  await page.locator('.TOURINC_chosen .chosen-single').click();
-  await page.waitForTimeout(500);
-  const tourSearch = page.locator('.TOURINC_chosen .chosen-search input');
-  if (await tourSearch.count()) {
-    const editable = await tourSearch.first().isEditable().catch(() => false);
-    if (editable) {
-      await tourSearch.first().fill('Vietnam MOW-CXR AZUR new');
-      await page.waitForTimeout(400);
-    }
-  }
-  const tourOption = page.locator('.TOURINC_chosen .active-result', { hasText: 'Vietnam MOW-CXR AZUR new' });
-  await tourOption.first().waitFor({ state: 'visible', timeout: 15000 });
-  await tourOption.first().click({ force: true });
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(1000);
 
   // Scroll to the bottom of the page
   currentStep = 'Прокрутка страницы';
@@ -237,10 +221,6 @@ async function resolveBronPage(context, page) {
     throw new Error(`выбрана неподходящая дата тура. Ожидалось: ${selectedCheckin}, получено: ${actualCheckin || 'не найдена'}`);
   }
 
-  // Open DevTools and switch to Network tab
-  await targetPage.keyboard.press('F12');
-  await targetPage.waitForTimeout(1000);
-
   // Fill tourist 1 data
   currentStep = 'Заполнение данных туриста 1';
   await fillTourist(targetPage, 1);
@@ -301,7 +281,7 @@ async function resolveBronPage(context, page) {
     return '';
   });
   console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
-  await notifyBron({ name: 'Vietnam', ok: true, orderNumber, claimUrl });
+  // await notifyBron({ name: 'Vietnam', ok: true, orderNumber, claimUrl });
 
   await browser.close();
   } catch (err) {
@@ -311,10 +291,6 @@ async function resolveBronPage(context, page) {
       if (activePage && !activePage.isClosed()) pageUrl = activePage.url();
     } catch (_) {}
     console.error(`❌ Ошибка на шаге "${currentStep}": ${err.message}\nURL: ${pageUrl}`);
-    await notifyBron({ name: 'Vietnam', ok: false, step: currentStep, error: err.message, url: pageUrl });
-    try {
-      const activePage = targetPage && !targetPage.isClosed() ? targetPage : page;
-      if (activePage && !activePage.isClosed()) await activePage.waitForTimeout(300000);
-    } catch (_) {}
+    // await notifyBron({ name: 'Vietnam', ok: false, step: currentStep, error: err.message, url: pageUrl });
   }
 })();
