@@ -1,5 +1,5 @@
 # Секреты: Settings → CI/CD → Variables
-# LOGIN, PASSWORD, BAND_WEBHOOK (Masked). Protected сними, если ветка не protected.
+# LOGIN, PASSWORD, BAND_WEBHOOK (Masked). Protected, если ветка не protected.
 
 workflow:
   rules:
@@ -21,6 +21,8 @@ default:
 # Фильтры и логин. Не бронирует. Стартует сам.
 filters:
   stage: test
+  tags:
+    - QA
   script:
     - npx playwright test
   artifacts:
