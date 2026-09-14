@@ -3,6 +3,7 @@ const { faker } = require('@faker-js/faker/locale/ru');
 const { transliterate } = require('transliteration');
 require('dotenv').config();
 const { setDate: setZebraDate, setAvailableDate } = require('./object/zebraDatePicker.cjs');
+const { notifyBron } = require('./notify.cjs');
 
 async function fillTourist(page, index) {
   const prefix = `#tourist${index}`;
@@ -280,10 +281,12 @@ async function fillTourist(page, index) {
     console.log('Не удалось проверить результат, URL:', targetPage.url());
   }
 
+  await notifyBron({ name: 'GDS', ok: orderNumber !== 'не найден', orderNumber, claimUrl });
   await browser.close();
   } catch (err) {
     const pageUrl = typeof page !== 'undefined' ? await page.evaluate(() => location.href).catch(() => 'недоступен') : 'недоступен';
     console.error(`❌ Ошибка на шаге "${currentStep}": ${err.message}\nURL: ${pageUrl}`);
+    await notifyBron({ name: 'GDS', ok: false, step: currentStep, error: err.message, url: pageUrl });
     if (typeof page !== 'undefined') {
       await page.waitForTimeout(300000).catch(() => {});
     }

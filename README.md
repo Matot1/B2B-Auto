@@ -23,12 +23,12 @@
 
 ## `notify.cjs`
 
-Отправка в Mattermost через `MATTERMOST_WEBHOOK`. Сейчас не подключена к скриптам, включим позже.
+Отправка в Band через `BAND_WEBHOOK` или `MATTERMOST_WEBHOOK`. Подключено ко всем `b2b*.js`: успех и ошибка.
 
 ## `.env`
 
 ```
 LOGIN=ваш_логин
 PASSWORD=ваш_пароль
-MATTERMOST_WEBHOOK=https://mattermost.yourcompany.com/hooks/xxx
+BAND_WEBHOOK=https://your-band-or-mattermost/hooks/xxx
 ```

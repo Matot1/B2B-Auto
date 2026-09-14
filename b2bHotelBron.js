@@ -4,6 +4,7 @@ const { faker } = require('@faker-js/faker/locale/ru');
 const { transliterate } = require('transliteration');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const { setDate: setZebraDate, setAvailableDate } = require('./object/zebraDatePicker.cjs');
+const { notifyBron } = require('./notify.cjs');
 
 async function fillTourist(page, index) {
   const prefix = `#tourist${index}`;
@@ -266,10 +267,12 @@ async function fillTourist(page, index) {
     return '';
   });
   console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
+  await notifyBron({ name: 'Hotel', ok: true, orderNumber, claimUrl });
 
   await browser.close();
   } catch (err) {
     const pageUrl = typeof page !== 'undefined' ? await page.evaluate(() => location.href).catch(() => 'недоступен') : 'недоступен';
     console.error(`❌ Ошибка на шаге "${currentStep}": ${err.message}\nURL: ${pageUrl}`);
+    await notifyBron({ name: 'Hotel', ok: false, step: currentStep, error: err.message, url: pageUrl });
   }
 })();

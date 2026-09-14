@@ -3,6 +3,7 @@ const { faker } = require('@faker-js/faker/locale/ru');
 const { transliterate } = require('transliteration');
 require('dotenv').config();
 const { setDate: setZebraDate, setAvailableDate } = require('./object/zebraDatePicker.cjs');
+const { notifyBron } = require('./notify.cjs');
 
 async function fillTourist(page, index) {
   const prefix = `#tourist${index}`;
@@ -260,6 +261,20 @@ async function resolveBronPage(context, page) {
   });
   console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
 
+  currentStep = 'Открытие заявки в ЛК';
+  if (!claimUrl) {
+    throw new Error('Нет ссылки «Посмотреть заявку»');
+  }
+  await targetPage.goto(claimUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await targetPage.waitForFunction(
+    (num) => document.body.innerText.includes(num),
+    orderNumber,
+    { timeout: 30000 },
+  );
+  console.log('Заявка открыта в ЛК, номер на странице:', orderNumber);
+
+  await notifyBron({ name: 'Egypt', ok: true, orderNumber, claimUrl });
+
   await browser.close();
   } catch (err) {
     let pageUrl = 'недоступен';
@@ -268,6 +283,7 @@ async function resolveBronPage(context, page) {
       if (activePage && !activePage.isClosed()) pageUrl = activePage.url();
     } catch (_) {}
     console.error(`❌ Ошибка на шаге "${currentStep}": ${err.message}\nURL: ${pageUrl}`);
+    await notifyBron({ name: 'Egypt', ok: false, step: currentStep, error: err.message, url: pageUrl });
     try {
       const activePage = targetPage && !targetPage.isClosed() ? targetPage : page;
       if (activePage && !activePage.isClosed()) await activePage.waitForTimeout(300000);

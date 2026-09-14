@@ -3,6 +3,7 @@ const { faker } = require('@faker-js/faker/locale/ru');
 const { transliterate } = require('transliteration');
 require('dotenv').config();
 const { setDate: setZebraDate, setAvailableDate } = require('./object/zebraDatePicker.cjs');
+const { notifyBron } = require('./notify.cjs');
 
 async function fillTourist(page, index) {
   const prefix = `#tourist${index}`;
@@ -300,6 +301,7 @@ async function resolveBronPage(context, page) {
     return '';
   });
   console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
+  await notifyBron({ name: 'Vietnam', ok: true, orderNumber, claimUrl });
 
   await browser.close();
   } catch (err) {
@@ -309,6 +311,7 @@ async function resolveBronPage(context, page) {
       if (activePage && !activePage.isClosed()) pageUrl = activePage.url();
     } catch (_) {}
     console.error(`❌ Ошибка на шаге "${currentStep}": ${err.message}\nURL: ${pageUrl}`);
+    await notifyBron({ name: 'Vietnam', ok: false, step: currentStep, error: err.message, url: pageUrl });
     try {
       const activePage = targetPage && !targetPage.isClosed() ? targetPage : page;
       if (activePage && !activePage.isClosed()) await activePage.waitForTimeout(300000);
