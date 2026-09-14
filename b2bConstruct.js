@@ -18,73 +18,52 @@ async function selectChosen(page, containerSelector, optionText) {
   const container = page.locator(containerSelector);
   const trigger = container.locator('a.chosen-single').first();
   await trigger.waitFor({ state: 'visible', timeout: 30000 });
-  await page.keyboard.press('Escape');
-  await waitAfterAction(page, 400);
-  await trigger.click({ force: true });
-  await waitAfterAction(page, 500);
-  await page.waitForFunction((sel) => {
-    const el = document.querySelector(sel);
-    return el && el.classList.contains('chosen-with-drop');
-  }, containerSelector, { timeout: 10000 }).catch(() => {});
-  const search = container.locator('.chosen-search input');
-  if (await search.count()) {
-    const editable = await search.first().isEditable().catch(() => false);
-    if (editable) {
-      await search.first().fill(optionText);
+  const already = (await trigger.innerText()).replace(/\s+/g, ' ').trim();
+  if (already.includes(optionText)) {
+    return;
+  }
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await page.keyboard.press('Escape');
+    await waitAfterAction(page, 400);
+    await trigger.click({ force: true });
+    await waitAfterAction(page, 500);
+    const opened = await page.waitForFunction((sel) => {
+      const el = document.querySelector(sel);
+      return el && el.classList.contains('chosen-with-drop');
+    }, containerSelector, { timeout: 10000 }).then(() => true).catch(() => false);
+    if (!opened) {
+      if (attempt === 3) {
+        throw new Error(`${containerSelector}: список не открылся`);
+      }
+      continue;
+    }
+
+    const search = container.locator('.chosen-search input');
+    if (await search.count()) {
+      const editable = await search.first().isEditable().catch(() => false);
+      if (editable) {
+        await search.first().fill(optionText);
+        await search.first().press('Space');
+        await search.first().press('Backspace');
+        await waitAfterAction(page, 400);
+      }
+    }
+
+    const option = container.locator('li.active-result').filter({ hasText: optionText }).first();
+    if (await option.isVisible().catch(() => false)) {
+      await option.click({ force: true });
+      await page.keyboard.press('Escape');
       await waitAfterAction(page, 400);
+      const display = (await trigger.innerText()).replace(/\s+/g, ' ').trim();
+      if (!display.includes(optionText)) {
+        throw new Error(`${containerSelector}: выбрано "${display}", ожидали "${optionText}"`);
+      }
+      return;
     }
-  }
-  const option = container.locator('li.active-result').filter({ hasText: optionText }).first();
-  await option.waitFor({ state: 'visible', timeout: 30000 });
-  await option.click({ force: true });
-  await page.keyboard.press('Escape');
-  await waitAfterAction(page, 400);
-  const display = (await trigger.innerText()).replace(/\s+/g, ' ').trim();
-  if (!display.includes(optionText)) {
-    throw new Error(`${containerSelector}: выбрано "${display}", ожидали "${optionText}"`);
-  }
-}
-
-async function selectChosenFirst(page, containerSelector) {
-  const container = page.locator(containerSelector);
-  const trigger = container.locator('a.chosen-single').first();
-  await trigger.waitFor({ state: 'visible', timeout: 30000 });
-  await trigger.scrollIntoViewIfNeeded();
-  await page.keyboard.press('Escape');
-  await waitAfterAction(page, 400);
-  await trigger.click({ force: true });
-  await page.waitForFunction((sel) => {
-    const el = document.querySelector(sel);
-    return Boolean(el && el.classList.contains('chosen-with-drop')
-      && el.querySelectorAll('li.active-result').length > 0);
-  }, containerSelector, { timeout: 30000 });
-
-  const picked = await page.evaluate((sel) => {
-    const box = document.querySelector(sel);
-    if (!box) return '';
-    const items = [...box.querySelectorAll('li.active-result')];
-    const first = items.find((li) => {
-      const text = (li.textContent || '').replace(/\s+/g, ' ').trim();
-      return text && !/^[-—–]+$/.test(text);
-    }) || items[0];
-    if (!first) return '';
-    first.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-    first.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-    first.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    if (window.jQuery) {
-      window.jQuery(first).mouseup();
+    if (attempt === 3) {
+      throw new Error(`${containerSelector}: нет пункта "${optionText}"`);
     }
-    return (first.textContent || '').replace(/\s+/g, ' ').trim();
-  }, containerSelector);
-
-  await page.keyboard.press('Escape');
-  await waitAfterAction(page, 800);
-  if (!picked) {
-    throw new Error(`${containerSelector}: в списке нет пунктов`);
-  }
-  const display = (await trigger.innerText()).replace(/\s+/g, ' ').trim();
-  if (isChosenEmpty(display)) {
-    throw new Error(`${containerSelector}: первый пункт не выбрался (было "${picked}")`);
   }
 }
 
@@ -144,7 +123,6 @@ async function pickPrevBackFreightDate(page) {
   }
   await closeDatePicker(page);
   await waitAfterAction(page, 2500);
-  console.log('Дата вылета обратно сдвинута на', prev);
 }
 
 async function ensureBackFreightClass(page) {
@@ -154,7 +132,6 @@ async function ensureBackFreightClass(page) {
   const maxAttempts = 7;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const { container, texts } = await listChosenOptions(page, selector);
-    console.log(`Класс мест обратно (попытка ${attempt}):`, texts.join(' | ') || 'пусто');
     const good = texts.find((t) => classRe.test(t));
     if (good) {
       const option = container.locator('li.active-result').filter({ hasText: good }).first();
@@ -162,7 +139,6 @@ async function ensureBackFreightClass(page) {
       await option.click({ force: true });
       await page.keyboard.press('Escape');
       await waitAfterAction(page, 400);
-      console.log('Класс мест выбран:', good);
       return;
     }
     await page.keyboard.press('Escape');
@@ -170,6 +146,53 @@ async function ensureBackFreightClass(page) {
       throw new Error(`Класс мест ECONOM нет для выбора за 7 дат. Доступно: ${texts.join(' | ') || 'пусто'}`);
     }
     await pickPrevBackFreightDate(page);
+  }
+}
+
+async function pickFreightWithSeats(page, selector, label) {
+  const hasSeatsRe = /есть\s+места/i;
+  const { container, texts } = await listChosenOptions(page, selector);
+  const good = texts.find((t) => hasSeatsRe.test(t));
+  if (!good) {
+    throw new Error(`${label}: нет строк с «есть места». Доступно: ${texts.join(' | ') || 'пусто'}`);
+  }
+  const option = container.locator('li.active-result').filter({ hasText: good }).first();
+  await option.waitFor({ state: 'visible', timeout: 30000 });
+  await option.click({ force: true });
+  await page.keyboard.press('Escape');
+  await waitAfterAction(page, 400);
+}
+
+async function ensureOutboundFreightFilters(page) {
+  await page.locator('#ORDER_TOWNTO_chosen').waitFor({ state: 'visible', timeout: 60000 });
+  await waitAfterAction(page, 1500);
+
+  const townTo = await getChosenDisplay(page, '#ORDER_TOWNTO_chosen');
+  const classInc = await getChosenDisplay(page, '#ORDER_CLASSINC_chosen');
+  const placeInc = await getChosenDisplay(page, '#ORDER_FRPLACEINC_chosen');
+  const freightInc = await getChosenDisplay(page, '#ORDER_FREIGHTINC_chosen');
+  const hasSeatsRe = /есть\s+места/i;
+
+  const allFilled = !isChosenEmpty(townTo)
+    && !isChosenEmpty(classInc)
+    && !isChosenEmpty(placeInc)
+    && !isChosenEmpty(freightInc);
+
+  if (allFilled) {
+    return;
+  }
+
+  if (isChosenEmpty(townTo)) {
+    await selectChosen(page, '#ORDER_TOWNTO_chosen', 'Хургада');
+  }
+  if (isChosenEmpty(classInc)) {
+    await selectChosen(page, '#ORDER_CLASSINC_chosen', 'ECONOM');
+  }
+  if (isChosenEmpty(placeInc)) {
+    await selectChosen(page, '#ORDER_FRPLACEINC_chosen', 'Стандартное');
+  }
+  if (isChosenEmpty(freightInc) || !hasSeatsRe.test(freightInc)) {
+    await pickFreightWithSeats(page, '#ORDER_FREIGHTINC_chosen', 'Транспорт');
   }
 }
 
@@ -187,7 +210,6 @@ async function ensureBackFreightWithSeats(page) {
   const maxAttempts = 7;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const { container, texts } = await listChosenOptions(page, selector);
-    console.log(`Транспорт обратно (попытка ${attempt}):`, texts.join(' | ') || 'пусто');
     const good = texts.find((t) => hasSeatsRe.test(t));
     if (good) {
       const option = container.locator('li.active-result').filter({ hasText: good }).first();
@@ -195,7 +217,6 @@ async function ensureBackFreightWithSeats(page) {
       await option.click({ force: true });
       await page.keyboard.press('Escape');
       await waitAfterAction(page, 400);
-      console.log('Транспорт обратно выбран:', good);
       return;
     }
     await page.keyboard.press('Escape');
@@ -232,11 +253,6 @@ async function saveFreightAndVerifyRows(page, saveOrderBtn) {
   if (freightRowsAfter < freightRowsBefore + 2) {
     throw new Error(`Ожидалось +2 строки транспорта, было ${freightRowsBefore}, стало ${freightRowsAfter}`);
   }
-  const newFreightRows = [];
-  for (let i = freightRowsBefore; i < freightRowsBefore + 2; i++) {
-    newFreightRows.push((await freightDataRows.nth(i).innerText()).replace(/\s+/g, ' ').trim());
-  }
-  console.log('Транспорт в заказах:', newFreightRows.join(' | '));
 }
 
 async function checkFreightOrderFields(page) {
@@ -252,31 +268,25 @@ async function checkFreightOrderFields(page) {
   for (const field of chosenFields) {
     const value = await getChosenDisplay(page, field.selector);
     const filled = !isChosenEmpty(value);
-    console.log(`${field.name}: ${filled ? value : 'пусто'}`);
     if (!filled) empty.push(field.name);
   }
 
   const backChecked = await page.locator('#ORDER_BACK_FREIGHT_ENABLE').isChecked().catch(() => false);
-  console.log('Чек-бокс "обратно":', backChecked ? 'включен' : 'выключен');
   if (!backChecked) empty.push('Чек-бокс "обратно"');
 
   const dateInput = page.locator('#edit_order > div > fieldset > table > tbody > tr:nth-child(7) > td:nth-child(2) > span input').first();
   const dateValue = (await dateInput.inputValue().catch(() => '')).trim();
-  console.log('Календарь даты вылета обратно:', dateValue || 'пусто');
   if (!dateValue) empty.push('Календарь даты вылета обратно');
 
   const classBack = await getChosenDisplay(page, '#ORDER_BACK_FREIGHTINC_CLASS_chosen');
-  console.log('Класс мест обратно:', isChosenEmpty(classBack) ? 'пусто' : classBack);
   if (isChosenEmpty(classBack)) empty.push('Класс мест обратно');
 
   const freightBack = await getChosenDisplay(page, '#ORDER_BACK_FREIGHTINC_chosen');
   const freightBackNoSeats = !isChosenEmpty(freightBack) && !hasSeatsRe.test(freightBack);
-  console.log('Транспорт обратно:', isChosenEmpty(freightBack) ? 'пусто' : freightBack);
   if (isChosenEmpty(freightBack)) empty.push('Транспорт обратно');
   if (freightBackNoSeats) empty.push('Транспорт обратно: нет «есть места»');
 
   const seatsCount = await getChosenDisplay(page, '#ORDER_COUNT_chosen');
-  console.log('Кол-во мест:', isChosenEmpty(seatsCount) ? 'пусто' : seatsCount);
   if (isChosenEmpty(seatsCount)) empty.push('Кол-во мест');
 
   return { empty, freightBackNoSeats };
@@ -296,16 +306,23 @@ async function checkFreightOrderFields(page) {
   let currentStep = '';
 
   try {
-  currentStep = 'Переход на конструктор заявки';
-  await page.goto('https://b2b.fstravel.com/cl_wizard?', { waitUntil: 'networkidle', timeout: 60000 });
+  currentStep = 'Переход на сайт';
+  await page.goto('https://b2b.fstravel.com/search_tour', { waitUntil: 'networkidle', timeout: 60000 });
+  await page.waitForTimeout(3000);
 
   currentStep = 'Авторизация на сайте';
-  await page.locator('a.login-action:has-text("Вход")').click();
+  const loginBtn = page.locator('a.login-action:has-text("Вход")');
+  await loginBtn.waitFor({ state: 'visible', timeout: 30000 });
+  await loginBtn.click();
   await page.getByLabel('Краткое имя').waitFor({ state: 'visible', timeout: 10000 });
   await page.getByLabel('Краткое имя').fill(process.env.LOGIN);
   await page.getByLabel('Пароль').fill(process.env.PASSWORD);
   await page.locator('button:has-text("Войти")').click();
   await page.waitForTimeout(3000);
+
+  currentStep = 'Переход на конструктор заявки';
+  await page.goto('https://b2b.fstravel.com/cl_wizard?', { waitUntil: 'networkidle', timeout: 60000 });
+  await page.waitForTimeout(2000);
 
   currentStep = 'Выбор города отправления Москва';
   const cityTrigger = page.locator('#cl_wizard > table.std.container.who_where > tbody > tr:nth-child(1) > td > table > tbody > tr:nth-child(1) > td:nth-child(2) > div > a');
@@ -327,7 +344,6 @@ async function checkFreightOrderFields(page) {
   await selectChosen(page, '#STATE_chosen', 'Египет');
   await countryResponse;
   await waitAfterAction(page, 2000);
-  console.log('Страна пребывания: Египет');
   await page.waitForFunction(() => {
     const select = document.querySelector('select[name="TOURINC"]');
     return select && select.options && select.options.length > 1;
@@ -465,7 +481,6 @@ async function checkFreightOrderFields(page) {
   if (!step2Url.includes('samo_action=STEP2load')) {
     throw new Error(`Не перешли на шаг 2. URL: ${step2Url}`);
   }
-  console.log('Переход на шаг 2:', step2Url);
 
   currentStep = 'Нажатие кнопки Заказ гостиницы';
   const hotelOrderBtn = page.locator('#ORDER_BTN_HOTEL');
@@ -483,7 +498,6 @@ async function checkFreightOrderFields(page) {
       && style.display !== 'none'
       && style.visibility !== 'hidden';
   }, { timeout: 60000 });
-  console.log('Окно гостиниц открыто');
 
   currentStep = 'Нажатие кнопки Искать в окне гостиниц';
   await searchHotelsBtn.click();
@@ -493,7 +507,6 @@ async function checkFreightOrderFields(page) {
   await hotelsList.waitFor({ state: 'visible', timeout: 60000 });
   const firstHotel = page.locator('#roomsHotelsList .hotelGDS').first();
   await firstHotel.waitFor({ state: 'visible', timeout: 60000 });
-  console.log('Список гостиниц загружен');
 
   currentStep = 'Открытие вариантов комнат';
   await firstHotel.scrollIntoViewIfNeeded();
@@ -532,17 +545,25 @@ async function checkFreightOrderFields(page) {
   currentStep = 'Проверка гостиницы в таблице Заказы';
   const hotelOrderRow = page.locator('#ALL_ORDER tr[data-order-type="HGDS"]');
   await hotelOrderRow.first().waitFor({ state: 'visible', timeout: 60000 });
-  const hotelOrderText = (await hotelOrderRow.first().innerText()).replace(/\s+/g, ' ').trim();
-  console.log('Гостиница в заказах:', hotelOrderText);
 
   currentStep = 'Нажатие кнопки Заказ транспорта';
   const freightOrderBtn = page.locator('#ORDER_BTN_FREIGHT');
   await freightOrderBtn.waitFor({ state: 'visible', timeout: 30000 });
   await freightOrderBtn.click();
-
-  currentStep = 'Выбор города вылета';
+  await page.locator('#edit_order').waitFor({ state: 'visible', timeout: 60000 });
   await page.locator('#ORDER_TOWNFROM_chosen').waitFor({ state: 'visible', timeout: 60000 });
-  await selectChosenFirst(page, '#ORDER_TOWNFROM_chosen');
+  await waitAfterAction(page, 2000);
+  await page.waitForFunction(() => {
+    const box = document.querySelector('#ORDER_TOWNFROM_chosen');
+    const select = box && box.previousElementSibling;
+    return Boolean(select && select.tagName === 'SELECT' && select.options && select.options.length > 1);
+  }, { timeout: 60000 });
+
+  currentStep = 'Выбор города вылета Москва';
+  await selectChosen(page, '#ORDER_TOWNFROM_chosen', 'Москва');
+
+  currentStep = 'Проверка фильтров транспорта туда';
+  await ensureOutboundFreightFilters(page);
 
   currentStep = 'Выбор класса мест ECONOM';
   const backFreightCb = page.locator('#ORDER_BACK_FREIGHT_ENABLE');
@@ -562,22 +583,15 @@ async function checkFreightOrderFields(page) {
   const saveOrderBtn = page.locator('#edit_order > button');
   await saveOrderBtn.waitFor({ state: 'visible', timeout: 10000 });
   let saveOrderReady = await waitSaveOrderReady(page, 5000);
-  console.log('Кнопка Сохранить:', saveOrderReady ? 'доступна' : 'недоступна');
 
   if (!saveOrderReady) {
     currentStep = 'Проверка полей заказа транспорта';
     const { empty, freightBackNoSeats } = await checkFreightOrderFields(page);
-    if (empty.length) {
-      console.log('Пустые поля:', empty.join(', '));
-    } else {
-      console.log('Все поля заказа транспорта заполнены');
-    }
     if (freightBackNoSeats || empty.includes('Транспорт обратно')) {
       currentStep = 'Проверка транспорта обратно';
       await ensureBackFreightWithSeats(page);
     }
     saveOrderReady = await waitSaveOrderReady(page, 5000);
-    console.log('Кнопка Сохранить после проверки полей:', saveOrderReady ? 'доступна' : 'недоступна');
   }
 
   if (saveOrderReady) {
@@ -613,8 +627,6 @@ async function checkFreightOrderFields(page) {
     await firstTouristOption.click({ force: true });
   }
   await page.keyboard.press('Escape');
-  const touristFromClaimValue = (await touristFromClaimTrigger.innerText()).replace(/\s+/g, ' ').trim();
-  console.log('Турист из заявки:', touristFromClaimValue);
 
   currentStep = 'Заполнение имени как в документе';
   const buyerFirstNameInput = page.locator('#cl_wizard > table > tbody > tr:nth-child(2) > td > div.CLAIMINFO.WITHBUYER > div:nth-child(1) > fieldset > div > fieldset > table > tbody > tr:nth-child(3) > td:nth-child(2) > input');
@@ -665,7 +677,7 @@ async function checkFreightOrderFields(page) {
   if (orderNumber === 'не найден') {
     throw new Error('Заявка не забронирована: номер не найден');
   }
-  console.log('Заявка забронирована. Номер:', orderNumber, 'Ссылка:', claimUrl);
+  console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
   await notifyBron({ name: 'Construct', ok: true, orderNumber, claimUrl });
 
   await browser.close();

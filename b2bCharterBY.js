@@ -215,20 +215,21 @@ async function selectChosenOption(page, openLocator, optionText, options = {}) {
 async function resolveBronPage(context, page) {
   for (let i = 0; i < 60; i++) {
     for (const p of context.pages()) {
-      if (!p.isClosed() && p.url().includes('/bron')) {
-        await p.waitForLoadState('domcontentloaded').catch(() => {});
-        await waitForLoad(p);
-        return p;
-      }
+      if (p.isClosed() || !p.url().includes('/bron')) continue;
+      await p.waitForLoadState('domcontentloaded').catch(() => {});
+      await waitForLoad(p);
+      const touristReady = await p.locator('#tourist1').count();
+      if (touristReady) return p;
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
-  if (!page.isClosed() && page.url().includes('/bron')) {
-    return page;
-  }
-
-  throw new Error('Страница /bron не открылась после выбора цены');
+  let hint = '';
+  try {
+    const active = context.pages().find((p) => !p.isClosed() && p.url().includes('/bron')) || page;
+    hint = (await active.evaluate(() => document.body.innerText)).replace(/\s+/g, ' ').trim().slice(0, 240);
+  } catch (_) {}
+  throw new Error(`Страница /bron без формы туриста. ${hint || 'Текст страницы пуст'}`);
 }
 
 (async () => {
@@ -309,7 +310,7 @@ async function resolveBronPage(context, page) {
   }
 
   targetPage = await resolveBronPage(context, targetPage);
-  await targetPage.locator('#tourist1').waitFor({ state: 'attached', timeout: 60000 });
+  await targetPage.locator('#tourist1').waitFor({ state: 'visible', timeout: 30000 });
 
   currentStep = 'Проверка даты тура';
   const actualCheckin = await targetPage.evaluate(() => {
@@ -383,6 +384,21 @@ async function resolveBronPage(context, page) {
     return '';
   });
   console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
+
+  currentStep = 'Проверка заявки в ЛК';
+  if (orderNumber === 'не найден') {
+    throw new Error('Номер заявки не найден');
+  }
+  if (!claimUrl) {
+    throw new Error('Нет ссылки «Посмотреть заявку»');
+  }
+  await targetPage.goto(claimUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await targetPage.waitForFunction(
+    (num) => document.body.innerText.includes(num),
+    orderNumber,
+    { timeout: 30000 },
+  );
+
   await notifyBron({ name: 'CharterBY', ok: true, orderNumber, claimUrl });
 
   await browser.close();

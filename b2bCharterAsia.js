@@ -332,6 +332,21 @@ async function resolveBronPage(context, page) {
     return '';
   });
   console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
+
+  currentStep = 'Проверка заявки в ЛК';
+  if (orderNumber === 'не найден') {
+    throw new Error('Номер заявки не найден');
+  }
+  if (!claimUrl) {
+    throw new Error('Нет ссылки «Посмотреть заявку»');
+  }
+  await targetPage.goto(claimUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await targetPage.waitForFunction(
+    (num) => document.body.innerText.includes(num),
+    orderNumber,
+    { timeout: 30000 },
+  );
+
   await notifyBron({ name: 'CharterAsia', ok: true, orderNumber, claimUrl });
 
   await browser.close();
