@@ -1,0 +1,76 @@
+# Секреты: Settings → CI/CD → Variables
+# LOGIN, PASSWORD, BAND_WEBHOOK (Masked). Protected сними, если ветка не protected.
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "lab"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+image: mcr.microsoft.com/playwright:v1.61.1-jammy
+
+stages:
+  - test
+  - bron
+
+default:
+  interruptible: true
+  before_script:
+    - npm ci
+
+# Фильтры и логин. Не бронирует. Стартует сам.
+filters:
+  stage: test
+  script:
+    - npx playwright test
+  artifacts:
+    when: always
+    paths:
+      - playwright-report/
+      - test-results/
+    expire_in: 7 days
+
+# Бронь на боевом B2B — только кнопка Play в пайплайне.
+.bron:
+  stage: bron
+  when: manual
+  allow_failure: false
+  timeout: 30m
+  needs: []
+
+hotel:
+  extends: .bron
+  script:
+    - node b2bHotelBron.js
+
+egypt:
+  extends: .bron
+  script:
+    - node b2bEgyptBron.js
+
+vietnam:
+  extends: .bron
+  script:
+    - node b2bVietnamBron.js
+
+gds:
+  extends: .bron
+  script:
+    - node b2bGDSBron.js
+
+charter-by:
+  extends: .bron
+  script:
+    - node b2bCharterBY.js
+
+charter-asia:
+  extends: .bron
+  script:
+    - node b2bCharterAsia.js
+
+# Ещё доделывается — тоже только вручную.
+construct:
+  extends: .bron
+  allow_failure: true
+  script:
+    - node b2bConstruct.js
