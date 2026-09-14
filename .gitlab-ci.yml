@@ -1,5 +1,5 @@
 # Ветка lab. Секреты: LOGIN, PASSWORD, BAND_WEBHOOK (Masked).
-# Скрипты лежат в корне, не в tests/.
+# Скрипты в корне. Джоба сама выходит после последнего node.
 
 stages:
   - test
@@ -23,7 +23,7 @@ test:playwright:
     - npm config set registry "https://nexus.fstravel.com/repository/proxy-npm/"
     - npm config set replace-registry-host always
     - npm ci --cache .npm --prefer-offline
-  timeout: 2h
+  timeout: 30m
   script:
     - node b2bVietnamBron.js
     - node b2bEgyptBron.js
