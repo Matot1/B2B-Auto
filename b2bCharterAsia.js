@@ -181,7 +181,7 @@ async function resolveBronPage(context, page) {
 }
 
 (async () => {
-  const browser = await chromium.launch({ headless: Boolean(process.env.CI) });
+  const browser = await chromium.launch({ headless: false });
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
     locale: 'ru-RU',
