@@ -219,7 +219,11 @@ async function resolveBronPage(context, page) {
       await p.waitForLoadState('domcontentloaded').catch(() => {});
       await waitForLoad(p);
       const touristReady = await p.locator('#tourist1').count();
-      if (touristReady) return p;
+      const lastNameVisible = await p.locator('input[name="frm[People][1][LASTNAME_LNAME]"]').isVisible().catch(() => false);
+      if (touristReady && lastNameVisible) return p;
+      if (touristReady) {
+        await p.locator('#tourist1').scrollIntoViewIfNeeded().catch(() => {});
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
@@ -309,8 +313,10 @@ async function resolveBronPage(context, page) {
     targetPage = page;
   }
 
+  currentStep = 'Ожидание формы туриста';
   targetPage = await resolveBronPage(context, targetPage);
-  await targetPage.locator('#tourist1').waitFor({ state: 'visible', timeout: 30000 });
+  await targetPage.locator('#tourist1').waitFor({ state: 'attached', timeout: 60000 });
+  await targetPage.locator('#tourist1').scrollIntoViewIfNeeded();
 
   currentStep = 'Проверка даты тура';
   const actualCheckin = await targetPage.evaluate(() => {
