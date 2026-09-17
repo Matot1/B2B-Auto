@@ -83,30 +83,76 @@ async function waitLoadersIfAny(page, timeout = 30000) {
   }).toBe(true);
 }
 
+async function waitCircleAppear(page, timeout = 3000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (!(await page.evaluate(isCircleIdle))) return true;
+    await page.waitForTimeout(100);
+  }
+  return false;
+}
+
 async function pickCountry(page, container, optionText) {
   const trigger = container.locator('a.chosen-single').first();
-  const appeared = expect.poll(() => page.evaluate(isCircleIdle), {
-    timeout: 30000,
-    message: 'После страны кружок не появился',
-  }).toBe(false);
-
   await trigger.click();
   const option = container.locator('li.active-result').filter({ hasText: optionText }).first();
   await option.click();
   await page.keyboard.press('Escape');
   await expect(trigger).toContainText(optionText, { timeout: 15000 });
 
-  await appeared;
-  await expect.poll(() => page.evaluate(isCircleIdle), {
-    timeout: 30000,
-    message: 'После страны загрузка не завершилась',
-  }).toBe(true);
+  if (await waitCircleAppear(page, 3000)) {
+    await expect.poll(() => page.evaluate(isCircleIdle), {
+      timeout: 30000,
+      message: 'После страны загрузка не завершилась',
+    }).toBe(true);
+  }
+
   await expect(trigger).toContainText(optionText, { timeout: 5000 });
 }
 
 async function afterStep(page, check) {
   await check();
   await waitLoadersIfAny(page);
+}
+
+function nextDay(dateStr) {
+  const [d, m, y] = dateStr.split('.').map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + 1);
+  return `${String(dt.getDate()).padStart(2, '0')}.${String(dt.getMonth() + 1).padStart(2, '0')}.${dt.getFullYear()}`;
+}
+
+async function clickSearch(page) {
+  await page.evaluate(() => {
+    const btn = document.querySelector('button.load.right');
+    if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+}
+
+async function searchUntilResults(page, checkin, onRetry) {
+  let date = checkin;
+  const maxTries = 7;
+  const table = page.locator('#scrollto');
+
+  for (let i = 0; i < maxTries; i++) {
+    await clickSearch(page);
+    await waitLoadersIfAny(page);
+    const shown = await table.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false);
+    if (shown) return date;
+
+    if (i === maxTries - 1) {
+      throw new Error(`Таблица #scrollto не появилась за ${maxTries} поисков`);
+    }
+
+    date = nextDay(date);
+    onRetry(`нет #scrollto, дата ${date}`);
+    await setZebraDate(page, 'CHECKIN_BEG', date);
+    await afterStep(page, async () => {
+      await expect(page.locator('input[name="CHECKIN_BEG"]')).toHaveValue(date);
+    });
+  }
+
+  return date;
 }
 
 async function assertChosenFilled(container, text) {
@@ -195,7 +241,7 @@ async function pickFilter(page, container, optionText) {
 
 (async () => {
   const browser = await chromium.launch({
-    headless: true,
+    headless: process.env.HEADED !== '1',
     args: ['--no-sandbox', '--disable-dev-shm-usage'],
   });
   const context = await browser.newContext({
@@ -208,9 +254,10 @@ async function pickFilter(page, container, optionText) {
 
   try {
 
-  await page.goto('https://b2b.fstravel.com/search_hotel', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  currentStep = 'Открытие search_hotel';
+  await page.goto('https://b2b.fstravel.com/search_hotel', { waitUntil: 'load', timeout: 60000 });
   await afterStep(page, async () => {
-    await expect(page.locator('a.login-action:has-text("Вход"), .STATEINC_chosen').first()).toBeVisible({ timeout: 30000 });
+    await expect(page.locator('a.login-action:has-text("Вход")')).toBeVisible({ timeout: 60000 });
   });
 
   currentStep = 'Авторизация на сайте';
@@ -288,11 +335,12 @@ async function pickFilter(page, container, optionText) {
   });
 
   currentStep = 'Нажатие кнопки Поиск';
-  await page.evaluate(() => {
-    const btn = document.querySelector('button.load.right');
-    if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  selectedCheckin = await searchUntilResults(page, selectedCheckin, (name) => {
+    currentStep = `Повтор поиска: ${name}`;
+    console.log(currentStep);
   });
   await afterStep(page, async () => {
+    await expect(page.locator('#scrollto')).toBeVisible();
     await expect(page.locator('span.price.bron.price_button').first()).toBeVisible({ timeout: 60000 });
   });
 

@@ -1,7 +1,9 @@
+const path = require('path');
 const { chromium } = require('playwright');
+const { expect } = require('@playwright/test');
 const { faker } = require('@faker-js/faker/locale/ru');
 const { transliterate } = require('transliteration');
-require('dotenv').config();
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const { setDate: setZebraDate, setAvailableDate } = require('./object/zebraDatePicker.cjs');
 const { notifyBron } = require('./notify.cjs');
 
@@ -72,9 +74,195 @@ async function resolveBronPage(context, page) {
   throw new Error('Страница /bron не открылась после выбора цены');
 }
 
+function isCircleIdle() {
+  const el = document.querySelector('#samo-circle-preloader');
+  if (!el) return true;
+  const st = getComputedStyle(el);
+  if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return true;
+  const r = el.getBoundingClientRect();
+  return r.width === 0 || r.height === 0;
+}
+
+function pageReadyState() {
+  const el = document.querySelector('#samo-circle-preloader');
+  let circleIdle = true;
+  if (el) {
+    const st = getComputedStyle(el);
+    if (st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity) !== 0) {
+      const r = el.getBoundingClientRect();
+      circleIdle = r.width === 0 || r.height === 0;
+    }
+  }
+  return { circleIdle };
+}
+
+async function waitLoadersIfAny(page, timeout = 30000) {
+  if (await page.evaluate(isCircleIdle)) return;
+  await expect.poll(() => page.evaluate(isCircleIdle), {
+    timeout,
+    message: 'Загрузка не завершилась',
+  }).toBe(true);
+}
+
+async function waitCircleAppear(page, timeout = 3000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (!(await page.evaluate(isCircleIdle))) return true;
+    await page.waitForTimeout(100);
+  }
+  return false;
+}
+
+async function pickCountry(page, container, optionText) {
+  const trigger = container.locator('a.chosen-single').first();
+  await trigger.click();
+  const option = container.locator('li.active-result').filter({ hasText: optionText }).first();
+  await option.click();
+  await page.keyboard.press('Escape');
+  await expect(trigger).toContainText(optionText, { timeout: 15000 });
+
+  if (await waitCircleAppear(page, 3000)) {
+    await expect.poll(() => page.evaluate(isCircleIdle), {
+      timeout: 30000,
+      message: 'После страны загрузка не завершилась',
+    }).toBe(true);
+  }
+
+  await expect(trigger).toContainText(optionText, { timeout: 5000 });
+}
+
+async function afterStep(page, check) {
+  await check();
+  await waitLoadersIfAny(page);
+}
+
+function nextDay(dateStr) {
+  const [d, m, y] = dateStr.split('.').map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + 1);
+  return `${String(dt.getDate()).padStart(2, '0')}.${String(dt.getMonth() + 1).padStart(2, '0')}.${dt.getFullYear()}`;
+}
+
+async function clickSearch(page) {
+  await page.evaluate(() => {
+    const btn = document.querySelector('button.load.right');
+    if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+}
+
+async function searchUntilResults(page, checkin, onRetry) {
+  let date = checkin;
+  const maxTries = 7;
+  const price = page.locator('#scrollto td.td_price span').first();
+
+  for (let i = 0; i < maxTries; i++) {
+    await clickSearch(page);
+    await waitLoadersIfAny(page);
+    const shown = await price.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false);
+    if (shown) return date;
+
+    if (i === maxTries - 1) {
+      throw new Error(`В #scrollto нет цен за ${maxTries} поисков`);
+    }
+
+    date = nextDay(date);
+    onRetry(`нет цены в #scrollto, дата ${date}`);
+    await setZebraDate(page, 'CHECKIN_BEG', date);
+    await afterStep(page, async () => {
+      await expect(page.locator('input[name="CHECKIN_BEG"]')).toHaveValue(date);
+    });
+  }
+
+  return date;
+}
+
+async function assertChosenFilled(container, text) {
+  await expect(container.locator('a.chosen-single').first()).toContainText(text, {
+    timeout: 5000,
+    message: `Фильтр должен быть «${text}»`,
+  });
+}
+
+async function chosenHas(container, text) {
+  const actual = await container.locator('a.chosen-single').first().innerText().catch(() => '');
+  return actual.includes(text);
+}
+
+async function pickFilter(page, container, optionText) {
+  const trigger = container.locator('a.chosen-single').first();
+  await trigger.click();
+  const option = container.locator('li.active-result').filter({ hasText: optionText }).first();
+  await option.click();
+  await page.keyboard.press('Escape');
+
+  await expect(trigger).toContainText(optionText, { timeout: 15000 });
+
+  await expect.poll(async () => {
+    const state = await page.evaluate(pageReadyState);
+    const filterOk = await trigger.evaluate((el, text) => el.innerText.includes(text), optionText);
+    if (!filterOk) return 'фильтр сбросился';
+    if (!state.circleIdle) return 'кружок ещё крутится';
+    return 'ok';
+  }, {
+    timeout: 30000,
+    message: `Фильтр «${optionText}»: страница ещё не готова`,
+  }).toBe('ok');
+
+  await expect(trigger).toContainText(optionText, { timeout: 5000 });
+}
+
+async function ensureFiltersBeforeSearch(page, filters, onRetry) {
+  let checkin = filters.checkin;
+  let refills = 0;
+
+  while (true) {
+    await waitLoadersIfAny(page);
+
+    const dateVal = await page.locator('input[name="CHECKIN_BEG"]').inputValue();
+    let missing = null;
+    if (!(await chosenHas(filters.city, 'Москва'))) missing = 'city';
+    else if (!(await chosenHas(filters.country, 'Египет'))) missing = 'country';
+    else if (!(await chosenHas(filters.freight, 'Чартер/блочная перевозка'))) missing = 'freight';
+    else if (!(await chosenHas(filters.tour, 'Sharm'))) missing = 'tour';
+    else if (dateVal !== checkin) missing = 'date';
+
+    if (!missing) {
+      await assertChosenFilled(filters.city, 'Москва');
+      await assertChosenFilled(filters.country, 'Египет');
+      await assertChosenFilled(filters.freight, 'Чартер/блочная перевозка');
+      await assertChosenFilled(filters.tour, 'Sharm');
+      await expect(page.locator('input[name="CHECKIN_BEG"]')).toHaveValue(checkin);
+      return checkin;
+    }
+
+    if (refills >= 3) {
+      throw new Error(`Фильтр «${missing}» пустой после 3 повторов. Поиск не нажимаю.`);
+    }
+    refills += 1;
+
+    if (missing === 'city') {
+      onRetry('Выбор города Москва');
+      await pickFilter(page, filters.city, 'Москва');
+    } else if (missing === 'country') {
+      onRetry('Выбор страны Египет');
+      await pickCountry(page, filters.country, 'Египет');
+    } else if (missing === 'freight') {
+      onRetry('Выбор типа перевозки');
+      await pickFilter(page, filters.freight, 'Чартер/блочная перевозка');
+    } else if (missing === 'tour') {
+      onRetry('Выбор тура Egypt Sharm-El-Sheikh MOW');
+      await filters.tour.scrollIntoViewIfNeeded();
+      await pickFilter(page, filters.tour, 'Sharm');
+    } else {
+      onRetry('Установка даты вылета');
+      checkin = await setAvailableDate(page, 'CHECKIN_BEG', 'yesplace');
+    }
+  }
+}
+
 (async () => {
   const browser = await chromium.launch({
-    headless: true,
+    headless: process.env.HEADED !== '1',
     args: ['--no-sandbox', '--disable-dev-shm-usage'],
   });
   const context = await browser.newContext({
@@ -88,95 +276,105 @@ async function resolveBronPage(context, page) {
 
   try {
 
-  await page.goto('https://b2b.fstravel.com/search_tour', { waitUntil: 'networkidle', timeout: 60000 });
+  await page.goto('https://b2b.fstravel.com/search_tour', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await afterStep(page, async () => {
+    await expect(page.locator('a.login-action:has-text("Вход"), .STATEINC_chosen').first()).toBeVisible({ timeout: 30000 });
+  });
 
-  // Wait for page to fully load
-  await page.waitForTimeout(3000);
-
-  // Click "Вход" and login
   currentStep = 'Авторизация на сайте';
+  if (!process.env.LOGIN || !process.env.PASSWORD) {
+    throw new Error('LOGIN или PASSWORD пустые. Запусти из GitLabTest или проверь .env рядом со скриптом.');
+  }
   await page.locator('a.login-action:has-text("Вход")').click();
-  await page.waitForTimeout(3000);
   await page.getByLabel('Краткое имя').fill(process.env.LOGIN);
   await page.getByLabel('Пароль').fill(process.env.PASSWORD);
   await page.locator('button:has-text("Войти")').click();
-  await page.waitForTimeout(3000);
+  await afterStep(page, async () => {
+    await expect(page.getByLabel('Краткое имя')).toBeHidden({ timeout: 30000 });
+    await expect(page.locator('.TOWNFROMINC_chosen')).toBeVisible();
+  });
 
-  // Select city "Москва"
   currentStep = 'Выбор города Москва';
-  await page.locator('.TOWNFROMINC_chosen .chosen-single').click({ force: true });
-  await page.waitForTimeout(300);
-  await page.locator('.TOWNFROMINC_chosen .active-result:has-text("Москва")').click({ force: true });
-  await page.keyboard.press('Escape');
-  await page.locator('.TOWNFROMINC_chosen').waitFor({ state: 'visible', timeout: 10000 });
-  await page.waitForTimeout(1000);
+  const cityFilter = page.locator('.TOWNFROMINC_chosen');
+  await pickFilter(page, cityFilter, 'Москва');
+  await afterStep(page, async () => {
+    await assertChosenFilled(cityFilter, 'Москва');
+  });
 
-  // Select country "Египет"
   currentStep = 'Выбор страны Египет';
-  await page.locator('.STATEINC_chosen .chosen-single').click({ force: true });
-  await page.waitForTimeout(300);
-  await page.locator('.STATEINC_chosen .active-result:has-text("Египет")').click({ force: true });
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(1000);
+  const countryFilter = page.locator('.STATEINC_chosen');
+  await pickCountry(page, countryFilter, 'Египет');
+  await afterStep(page, async () => {
+    await assertChosenFilled(countryFilter, 'Египет');
+  });
 
-  // Select freight type "Чартер/блочная перевозка"
   currentStep = 'Выбор типа перевозки';
-  await page.locator('.FREIGHTTYPE_chosen .chosen-single').click();
-  await page.waitForTimeout(300);
-  await page.locator('.FREIGHTTYPE_chosen .active-result:has-text("Чартер/блочная перевозка")').click();
-  await page.waitForTimeout(1000);
+  const freightFilter = page.locator('.FREIGHTTYPE_chosen');
+  await pickFilter(page, freightFilter, 'Чартер/блочная перевозка');
+  await afterStep(page, async () => {
+    await assertChosenFilled(freightFilter, 'Чартер/блочная перевозка');
+  });
 
-  // Select tour "Egypt Sharm-El-Sheikh MOW"
   currentStep = 'Выбор тура Egypt Sharm-El-Sheikh MOW';
-  await page.locator('.TOURINC_chosen .chosen-single').scrollIntoViewIfNeeded();
-  await page.waitForTimeout(300);
-  await page.locator('.TOURINC_chosen .chosen-single').click();
-  await page.waitForTimeout(500);
+  const tourFilter = page.locator('.TOURINC_chosen');
+  await tourFilter.scrollIntoViewIfNeeded();
+  await pickFilter(page, tourFilter, 'Sharm');
+  await afterStep(page, async () => {
+    await assertChosenFilled(tourFilter, 'Sharm');
+  });
 
-  const tourOption = page.locator('.TOURINC_chosen .active-result', { hasText: 'Sharm' });
-  await tourOption.first().waitFor({ state: 'attached', timeout: 5000 });
-  await tourOption.first().click({ force: true });
-  await page.waitForTimeout(1000);
-
-  // Scroll to the bottom of the page
   currentStep = 'Прокрутка страницы';
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await page.waitForTimeout(500);
+  await afterStep(page, async () => {
+    await expect(page.locator('input[name="CHECKIN_BEG"]')).toBeVisible();
+  });
 
-  // Set "Вылет От" to the first green calendar date with tours (yesplace), after 4 months
   currentStep = 'Установка даты вылета';
-  const selectedCheckin = await setAvailableDate(page, 'CHECKIN_BEG', 'yesplace');
+  let selectedCheckin = await setAvailableDate(page, 'CHECKIN_BEG', 'yesplace');
   console.log('Выбрана дата вылета:', selectedCheckin);
+  await afterStep(page, async () => {
+    await expect(page.locator('input[name="CHECKIN_BEG"]')).toHaveValue(selectedCheckin);
+  });
 
-  // Uncheck "группировать результаты" checkbox
   currentStep = 'Снятие чек-бокса группировать результаты';
   const groupCheckbox = page.locator('label:has-text("группировать результаты")').locator('input[type="checkbox"]');
   if (await groupCheckbox.isChecked()) {
     await groupCheckbox.uncheck();
   }
-  await page.waitForTimeout(300);
+  await afterStep(page, async () => {
+    await expect(groupCheckbox).not.toBeChecked();
+  });
 
-  // Check "Не отображать PROMO" checkbox
   currentStep = 'Активация чек-бокса Не отображать PROMO';
   const promoCheckbox = page.locator('label:has-text("Не отображать PROMO")').locator('input[type="checkbox"]');
   if (!(await promoCheckbox.isChecked())) {
     await promoCheckbox.check();
   }
-  await page.waitForTimeout(300);
-
-  // Click "Поиск" button
-  currentStep = 'Нажатие кнопки Поиск';
-  await page.locator('button.load.right').click({ force: true }).catch(async () => {
-    await page.evaluate(() => {
-      const btn = document.querySelector('button.load.right');
-      if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
+  await afterStep(page, async () => {
+    await expect(promoCheckbox).toBeChecked();
   });
-  await page.waitForLoadState('domcontentloaded').catch(() => {});
+
+  currentStep = 'Проверка всех фильтров перед поиском';
+  selectedCheckin = await ensureFiltersBeforeSearch(page, {
+    city: cityFilter,
+    country: countryFilter,
+    freight: freightFilter,
+    tour: tourFilter,
+    checkin: selectedCheckin,
+  }, (name) => {
+    currentStep = `Повтор: ${name}`;
+    console.log(currentStep);
+  });
+
+  currentStep = 'Нажатие кнопки Поиск';
+  selectedCheckin = await searchUntilResults(page, selectedCheckin, (name) => {
+    currentStep = `Повтор поиска: ${name}`;
+    console.log(currentStep);
+  });
 
   currentStep = 'Ожидание результатов поиска';
   const priceBtn = page.locator('#scrollto td.td_price span').first();
-  await priceBtn.waitFor({ state: 'visible', timeout: 60000 });
+  await expect(priceBtn).toBeVisible({ timeout: 5000 });
 
   currentStep = 'Выбор тура по цене';
   await priceBtn.scrollIntoViewIfNeeded();
