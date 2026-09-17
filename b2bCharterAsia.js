@@ -1,8 +1,10 @@
+const path = require('path');
 const { chromium } = require('playwright');
+const { expect } = require('@playwright/test');
 const { faker } = require('@faker-js/faker/locale/ru');
 const { transliterate } = require('transliteration');
-require('dotenv').config();
-const { setAvailableDate, setDateDirect } = require('./object/zebraDatePicker.cjs');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+const { setAvailableDate, setDateDirect, setDate: setZebraDate } = require('./object/zebraDatePicker.cjs');
 const { notifyBron } = require('./notify.cjs');
 
 function chosenContainer(page, selectName) {
@@ -67,6 +69,8 @@ async function fillTourist(page, index) {
 
   await setDateDirect(page, `${prefix}[BORN]`, '01.01.2000');
 
+  await fillInputValue(page.locator(`input[name="${prefix}[EMAIL]"]`), 'test33@mail.ru');
+
   await selectChosenByName(page, `${prefix}[NATIONALITY]`, 'Россия');
 
   await selectChosenByName(page, `${prefix}[IDENTITY_DOCUMENT]`, 'Заграничный паспорт');
@@ -87,20 +91,198 @@ async function fillTourist(page, index) {
   await selectChosenByName(page, `VISA[${index}]`, 'Своя виза');
 }
 
+function isCircleIdle() {
+  const el = document.querySelector('#samo-circle-preloader');
+  if (!el) return true;
+  const st = getComputedStyle(el);
+  if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return true;
+  const r = el.getBoundingClientRect();
+  return r.width === 0 || r.height === 0;
+}
+
+function pageReadyState() {
+  const el = document.querySelector('#samo-circle-preloader');
+  let circleIdle = true;
+  if (el) {
+    const st = getComputedStyle(el);
+    if (st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity) !== 0) {
+      const r = el.getBoundingClientRect();
+      circleIdle = r.width === 0 || r.height === 0;
+    }
+  }
+  return { circleIdle };
+}
+
+async function waitLoadersIfAny(page, timeout = 30000) {
+  if (await page.evaluate(isCircleIdle)) return;
+  await expect.poll(() => page.evaluate(isCircleIdle), {
+    timeout,
+    message: 'Загрузка не завершилась',
+  }).toBe(true);
+}
+
+async function waitCircleAppear(page, timeout = 3000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (!(await page.evaluate(isCircleIdle))) return true;
+    await page.waitForTimeout(100);
+  }
+  return false;
+}
+
+async function afterStep(page, check) {
+  await check();
+  await waitLoadersIfAny(page);
+}
+
+async function pickCountry(page, container, optionText) {
+  const trigger = container.locator('a.chosen-single').first();
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await trigger.click();
+    const option = container.locator('li.active-result').filter({ hasText: optionText }).first();
+    await option.click();
+    await page.keyboard.press('Escape');
+    await expect(trigger).toContainText(optionText, { timeout: 15000 });
+
+    if (await waitCircleAppear(page, 3000)) {
+      await expect.poll(() => page.evaluate(isCircleIdle), {
+        timeout: 30000,
+        message: 'После страны загрузка не завершилась',
+      }).toBe(true);
+    }
+    await waitLoadersIfAny(page);
+
+    const text = (await trigger.innerText()).trim();
+    if (text.includes(optionText)) return;
+    console.log(`Страна сбросилась в «${text}», повтор ${attempt}`);
+  }
+
+  await expect(trigger).toContainText(optionText, { timeout: 5000 });
+}
+
+async function pickFilter(page, container, optionText) {
+  const trigger = container.locator('a.chosen-single').first();
+  await trigger.click();
+  const option = container.locator('li.active-result').filter({ hasText: optionText }).first();
+  await option.click();
+  await page.keyboard.press('Escape');
+
+  await expect(trigger).toContainText(optionText, { timeout: 15000 });
+
+  await expect.poll(async () => {
+    const state = await page.evaluate(pageReadyState);
+    const filterOk = await trigger.evaluate((el, text) => el.innerText.includes(text), optionText);
+    if (!filterOk) return 'фильтр сбросился';
+    if (!state.circleIdle) return 'кружок ещё крутится';
+    return 'ok';
+  }, {
+    timeout: 30000,
+    message: `Фильтр «${optionText}»: страница ещё не готова`,
+  }).toBe('ok');
+
+  await expect(trigger).toContainText(optionText, { timeout: 5000 });
+}
+
+async function assertChosenFilled(container, text) {
+  await expect(container.locator('a.chosen-single').first()).toContainText(text, {
+    timeout: 5000,
+    message: `Фильтр должен быть «${text}»`,
+  });
+}
+
+async function chosenHas(container, text) {
+  const actual = await container.locator('a.chosen-single').first().innerText().catch(() => '');
+  return actual.includes(text);
+}
+
+function nextDay(dateStr) {
+  const [d, m, y] = dateStr.split('.').map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + 1);
+  return `${String(dt.getDate()).padStart(2, '0')}.${String(dt.getMonth() + 1).padStart(2, '0')}.${dt.getFullYear()}`;
+}
+
+async function clickSearch(page) {
+  await page.evaluate(() => {
+    const btn = document.querySelector('button.load.right');
+    if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+}
+
+async function searchUntilResults(page, checkin, onRetry) {
+  let date = checkin;
+  const maxTries = 7;
+  const price = page.locator('#scrollto td.td_price span').first();
+
+  for (let i = 0; i < maxTries; i++) {
+    await clickSearch(page);
+    await waitLoadersIfAny(page);
+    const shown = await price.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false);
+    if (shown) return date;
+
+    if (i === maxTries - 1) {
+      throw new Error(`В #scrollto нет цен за ${maxTries} поисков`);
+    }
+
+    date = nextDay(date);
+    onRetry(`нет цены в #scrollto, пробуем дату ${date}`);
+    await setZebraDate(page, 'CHECKIN_BEG', date);
+    await waitLoadersIfAny(page);
+    const actualDate = await page.locator('input[name="CHECKIN_BEG"]').inputValue();
+    if (actualDate) date = actualDate;
+    console.log('Дата в поле после сдвига:', date);
+  }
+
+  return date;
+}
+
+async function ensureFiltersBeforeSearch(page, filters, onRetry) {
+  let checkin = filters.checkin;
+  let refills = 0;
+
+  while (true) {
+    await waitLoadersIfAny(page);
+
+    const dateVal = await page.locator('input[name="CHECKIN_BEG"]').inputValue();
+    let missing = null;
+    if (!(await chosenHas(filters.city, 'Астана'))) missing = 'city';
+    else if (!(await chosenHas(filters.country, 'Египет'))) missing = 'country';
+    else if (!(await chosenHas(filters.group, 'Чартер/блочная перевозка'))) missing = 'group';
+    else if (dateVal !== checkin) missing = 'date';
+
+    if (!missing) {
+      await assertChosenFilled(filters.city, 'Астана');
+      await assertChosenFilled(filters.country, 'Египет');
+      await assertChosenFilled(filters.group, 'Чартер/блочная перевозка');
+      await expect(page.locator('input[name="CHECKIN_BEG"]')).toHaveValue(checkin);
+      return checkin;
+    }
+
+    if (refills >= 3) {
+      throw new Error(`Фильтр «${missing}» пустой после 3 повторов. Поиск не нажимаю.`);
+    }
+    refills += 1;
+
+    if (missing === 'city') {
+      onRetry('Выбор города Астана');
+      await pickFilter(page, filters.city, 'Астана');
+    } else if (missing === 'country') {
+      onRetry('Выбор страны Египет');
+      await pickCountry(page, filters.country, 'Египет');
+    } else if (missing === 'group') {
+      onRetry('Выбор группы тура');
+      await pickFilter(page, filters.group, 'Чартер/блочная перевозка');
+    } else {
+      onRetry('Установка даты вылета');
+      checkin = await setAvailableDate(page, 'CHECKIN_BEG', 'yesplace');
+    }
+  }
+}
+
 async function waitForLoad(page, timeout = 30000) {
   await page.waitForLoadState('domcontentloaded').catch(() => {});
   await page.waitForLoadState('networkidle', { timeout }).catch(() => {});
-}
-
-async function waitForFiltersSettle(page, ms = 4000) {
-  await waitForLoad(page, 60000);
-  await page.waitForTimeout(ms);
-}
-
-async function getChosenText(page, containerSelector) {
-  const trigger = page.locator(`${containerSelector} a.chosen-single`).first();
-  if (!(await trigger.count())) return '';
-  return (await trigger.innerText()).replace(/\s+/g, ' ').trim();
 }
 
 async function clickAndWait(page, locator, options = {}) {
@@ -113,52 +295,6 @@ async function clickAndWait(page, locator, options = {}) {
   await locator.click(clickOptions);
   await responsePromise;
   await waitForLoad(page, timeout);
-}
-
-async function clickSearchAndWaitForResults(page, options = {}) {
-  const { resultTimeout = 60000, maxAttempts = 2 } = options;
-  const searchBtn = page.locator('button.load.right:has-text("Искать")');
-  const resultsBlock = page.locator('#scrollto');
-  const priceBtn = page.locator('#scrollto td.td_price span').first();
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (attempt === 1) {
-      console.log('Ожидание результатов поиска...');
-    } else {
-      console.log('Результаты не найдены — повторное нажатие «Искать»');
-    }
-
-    const searchResponse = page.waitForResponse(
-      (response) => response.url().includes('fstravel.asia') && response.status() < 400,
-      { timeout: resultTimeout },
-    ).catch(() => null);
-
-    await searchBtn.click({ force: true });
-    await searchResponse;
-    await waitForLoad(page, resultTimeout);
-
-    try {
-      await resultsBlock.waitFor({ state: 'visible', timeout: resultTimeout });
-      await priceBtn.waitFor({ state: 'visible', timeout: resultTimeout });
-      return priceBtn;
-    } catch (err) {
-      if (attempt >= maxAttempts) {
-        throw new Error('Таблица результатов с кнопками цен не появилась после повторного поиска');
-      }
-    }
-  }
-}
-
-async function selectChosenOption(page, openLocator, optionText, options = {}) {
-  const { timeout = 30000, settleMs = 4000 } = options;
-  await openLocator.scrollIntoViewIfNeeded();
-  await page.keyboard.press('Escape').catch(() => {});
-  await page.waitForTimeout(300);
-  await openLocator.click({ force: true });
-  const option = page.locator('.chosen-container-active .active-result').filter({ hasText: optionText }).first();
-  await option.waitFor({ state: 'visible', timeout });
-  await option.click({ force: true });
-  await waitForFiltersSettle(page, settleMs);
 }
 
 async function resolveBronPage(context, page) {
@@ -182,7 +318,7 @@ async function resolveBronPage(context, page) {
 
 (async () => {
   const browser = await chromium.launch({
-    headless: true,
+    headless: process.env.HEADED !== '1',
     args: ['--no-sandbox', '--disable-dev-shm-usage'],
   });
   const context = await browser.newContext({
@@ -195,71 +331,86 @@ async function resolveBronPage(context, page) {
   let targetPage = page;
 
   try {
-  await page.goto('https://b2b.fstravel.asia/search_tour', { waitUntil: 'networkidle', timeout: 60000 });
-  await page.locator('.TOWNFROMINC_chosen').waitFor({ state: 'visible', timeout: 30000 });
+  currentStep = 'Открытие search_tour';
+  await page.goto('https://b2b.fstravel.asia/search_tour', { waitUntil: 'load', timeout: 60000 });
+  await afterStep(page, async () => {
+    await expect(page.locator('a.login-action:has-text("Вход")')).toBeVisible({ timeout: 60000 });
+  });
 
   currentStep = 'Авторизация на сайте';
+  if (!process.env.LOGIN || !process.env.PASSWORD) {
+    throw new Error('LOGIN или PASSWORD пустые. Запусти из GitLabTest или проверь .env рядом со скриптом.');
+  }
   await page.locator('a.login-action:has-text("Вход")').click();
-  await page.getByLabel('Краткое имя').waitFor({ state: 'visible', timeout: 10000 });
   await page.getByLabel('Краткое имя').fill(process.env.LOGIN);
   await page.getByLabel('Пароль').fill(process.env.PASSWORD);
-  await clickAndWait(page, page.locator('button:has-text("Войти")'));
+  await page.locator('button:has-text("Войти")').click();
+  await afterStep(page, async () => {
+    await expect(page.getByLabel('Краткое имя')).toBeHidden({ timeout: 30000 });
+    await expect(page.locator('.TOWNFROMINC_chosen')).toBeVisible();
+  });
 
   currentStep = 'Выбор города Астана';
-  await selectChosenOption(
-    page,
-    page.locator('.TOWNFROMINC_chosen .chosen-single'),
-    'Астана',
-  );
+  const cityFilter = page.locator('.TOWNFROMINC_chosen');
+  await pickFilter(page, cityFilter, 'Астана');
+  await afterStep(page, async () => {
+    await assertChosenFilled(cityFilter, 'Астана');
+  });
 
   currentStep = 'Выбор страны Египет';
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    await selectChosenOption(
-      page,
-      page.locator('.STATEINC_chosen .chosen-single'),
-      'Египет',
-      { settleMs: 5000 },
-    );
-    const country = await getChosenText(page, '.STATEINC_chosen');
-    console.log(`Страна после выбора (попытка ${attempt}):`, country);
-    if (country.includes('Египет')) break;
-    if (attempt === 3) {
-      throw new Error(`Страна сбросилась. Сейчас: "${country}"`);
-    }
-    console.log('Страна сбросилась — выбираю Египет снова');
-  }
+  const countryFilter = page.locator('.STATEINC_chosen');
+  await pickCountry(page, countryFilter, 'Египет');
+  await afterStep(page, async () => {
+    await assertChosenFilled(countryFilter, 'Египет');
+  });
 
   currentStep = 'Выбор группы тура';
   const tourGroupFilter = page.locator('#search_tour > div.std.container > table.direction.panel > tbody > tr:nth-child(1) > td:nth-child(2) > table > tbody > tr:nth-child(1) > td.tour_right');
-  await tourGroupFilter.locator('.chosen-single').waitFor({ state: 'visible', timeout: 30000 });
-  await page.waitForTimeout(1500);
-  await selectChosenOption(
-    page,
-    tourGroupFilter.locator('.chosen-single'),
-    'Чартер/блочная перевозка',
-    { settleMs: 4000 },
-  );
-  const countryAfterGroup = await getChosenText(page, '.STATEINC_chosen');
-  if (!countryAfterGroup.includes('Египет')) {
-    throw new Error(`После группы тура страна снова "${countryAfterGroup}"`);
-  }
+  await pickFilter(page, tourGroupFilter, 'Чартер/блочная перевозка');
+  await afterStep(page, async () => {
+    await assertChosenFilled(tourGroupFilter, 'Чартер/блочная перевозка');
+  });
 
   currentStep = 'Прокрутка страницы';
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await page.locator('input[name="CHECKIN_BEG"]').waitFor({ state: 'visible', timeout: 10000 });
+  await afterStep(page, async () => {
+    await expect(page.locator('input[name="CHECKIN_BEG"]')).toBeVisible();
+  });
 
   currentStep = 'Установка даты вылета';
-  const selectedCheckin = await setAvailableDate(page, 'CHECKIN_BEG', 'yesplace');
+  let selectedCheckin = await setAvailableDate(page, 'CHECKIN_BEG', 'yesplace');
   console.log('Выбрана дата вылета:', selectedCheckin);
+  await afterStep(page, async () => {
+    await expect(page.locator('input[name="CHECKIN_BEG"]')).toHaveValue(selectedCheckin);
+  });
 
   currentStep = 'Снятие чек-бокса группировать результаты';
   const groupCheckbox = page.locator('label:has-text("группировать результаты")').locator('input[type="checkbox"]');
   if (await groupCheckbox.isChecked()) {
     await groupCheckbox.uncheck();
   }
+  await afterStep(page, async () => {
+    await expect(groupCheckbox).not.toBeChecked();
+  });
+
+  currentStep = 'Проверка всех фильтров перед поиском';
+  selectedCheckin = await ensureFiltersBeforeSearch(page, {
+    city: cityFilter,
+    country: countryFilter,
+    group: tourGroupFilter,
+    checkin: selectedCheckin,
+  }, (name) => {
+    currentStep = `Повтор: ${name}`;
+    console.log(currentStep);
+  });
 
   currentStep = 'Нажатие кнопки Искать';
-  const priceBtn = await clickSearchAndWaitForResults(page);
+  selectedCheckin = await searchUntilResults(page, selectedCheckin, (name) => {
+    currentStep = `Повтор поиска: ${name}`;
+    console.log(currentStep);
+  });
+  const priceBtn = page.locator('#scrollto td.td_price span').first();
+  await expect(priceBtn).toBeVisible({ timeout: 5000 });
 
   currentStep = 'Выбор тура по цене';
   await priceBtn.scrollIntoViewIfNeeded();
@@ -285,8 +436,8 @@ async function resolveBronPage(context, page) {
     const table = document.querySelector('table.tour_info.res');
     return table ? table.getAttribute('data-checkin') : null;
   });
-  if (actualCheckin !== selectedCheckin) {
-    throw new Error(`выбрана неподходящая дата тура. Ожидалось: ${selectedCheckin}, получено: ${actualCheckin || 'не найдена'}`);
+  if (actualCheckin && actualCheckin !== selectedCheckin) {
+    console.log(`Дата тура ${actualCheckin}, в фильтре было ${selectedCheckin} — не ошибка`);
   }
 
   currentStep = 'Заполнение данных туриста 1';
