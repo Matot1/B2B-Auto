@@ -5,8 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "node search_test.js",
-    "test:prod": "npx playwright test --config=playwright.egypt.config.js",
-    "test:egypt": "npx playwright test --config=playwright.egypt.config.js"
+    "test:prod": "npx playwright test --config=playwright.bron.config.js",
+    "test:egypt": "npx playwright test --config=playwright.bron.config.js b2bEgyptBron.spec.js"
   },
   "keywords": [],
   "author": "",

@@ -1,70 +1,103 @@
-const { chromium } = require('playwright');
+const path = require('path');
+const { expect } = require('@playwright/test');
 const { faker } = require('@faker-js/faker/locale/ru');
 const { transliterate } = require('transliteration');
-require('dotenv').config();
-const { setAvailableDate, setDate, setDateDirect } = require('./object/zebraDatePicker.cjs');
-const { notifyBron } = require('./notify.cjs');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+const { setAvailableDate, setDate, setDateDirect } = require('../object/zebraDatePicker.cjs');
+const { notifyBron } = require('../notify.cjs');
 
 async function closeDatePicker(page) {
   await page.keyboard.press('Escape');
   await page.locator('.Zebra_DatePicker.dp_visible').waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
 }
 
+function isCircleIdle() {
+  const el = document.querySelector('#samo-circle-preloader');
+  if (!el) return true;
+  const st = getComputedStyle(el);
+  if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return true;
+  const r = el.getBoundingClientRect();
+  return r.width === 0 || r.height === 0;
+}
+
+async function waitLoadersIfAny(page, timeout = 30000) {
+  if (await page.evaluate(isCircleIdle)) return;
+  await expect.poll(() => page.evaluate(isCircleIdle), {
+    timeout,
+    message: 'Загрузка не завершилась',
+  }).toBe(true);
+}
+
+async function waitCircleAppear(page, timeout = 3000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (!(await page.evaluate(isCircleIdle))) return true;
+    await page.waitForTimeout(100);
+  }
+  return false;
+}
+
+async function afterStep(page, check) {
+  await check();
+  await waitLoadersIfAny(page);
+}
+
+async function reloadIfForbidden(page) {
+  for (let i = 0; i < 3; i++) {
+    const text = await page.evaluate(() => document.body.innerText).catch(() => '');
+    if (!/forbidden/i.test(text)) return;
+    console.log('Страница Forbidden — обновляю');
+    await page.reload({ waitUntil: 'load', timeout: 60000 });
+    await waitLoadersIfAny(page);
+  }
+}
+
 async function waitAfterAction(page, ms = 1500) {
   await page.waitForTimeout(ms);
+}
+
+async function waitChosenHasOption(page, containerSelector, optionText, timeout = 30000) {
+  await expect.poll(() => page.evaluate(({ sel, text }) => {
+    const box = document.querySelector(sel);
+    if (!box) return false;
+    const trigger = box.querySelector('a.chosen-single');
+    if (trigger && (trigger.innerText || '').includes(text)) return true;
+    const select = box.previousElementSibling;
+    if (select && select.tagName === 'SELECT') {
+      return [...select.options].some((o) => (o.textContent || '').includes(text));
+    }
+    return [...box.querySelectorAll('li.active-result')].some((li) => (li.textContent || '').includes(text));
+  }, { sel: containerSelector, text: optionText }), {
+    timeout,
+    message: `${containerSelector}: нет пункта «${optionText}»`,
+  }).toBe(true);
 }
 
 async function selectChosen(page, containerSelector, optionText) {
   const container = page.locator(containerSelector);
   const trigger = container.locator('a.chosen-single').first();
   await trigger.waitFor({ state: 'visible', timeout: 30000 });
+  await waitLoadersIfAny(page);
   const already = (await trigger.innerText()).replace(/\s+/g, ' ').trim();
   if (already.includes(optionText)) {
     return;
   }
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    await page.keyboard.press('Escape');
-    await waitAfterAction(page, 400);
-    await trigger.click({ force: true });
-    await waitAfterAction(page, 500);
-    const opened = await page.waitForFunction((sel) => {
-      const el = document.querySelector(sel);
-      return el && el.classList.contains('chosen-with-drop');
-    }, containerSelector, { timeout: 10000 }).then(() => true).catch(() => false);
-    if (!opened) {
-      if (attempt === 3) {
-        throw new Error(`${containerSelector}: список не открылся`);
-      }
-      continue;
-    }
-
-    const search = container.locator('.chosen-search input');
-    if (await search.count()) {
-      const editable = await search.first().isEditable().catch(() => false);
-      if (editable) {
-        await search.first().fill(optionText);
-        await search.first().press('Space');
-        await search.first().press('Backspace');
-        await waitAfterAction(page, 400);
-      }
-    }
-
-    const option = container.locator('li.active-result').filter({ hasText: optionText }).first();
-    if (await option.isVisible().catch(() => false)) {
-      await option.click({ force: true });
-      await page.keyboard.press('Escape');
-      await waitAfterAction(page, 400);
-      const display = (await trigger.innerText()).replace(/\s+/g, ' ').trim();
-      if (!display.includes(optionText)) {
-        throw new Error(`${containerSelector}: выбрано "${display}", ожидали "${optionText}"`);
-      }
-      return;
-    }
-    if (attempt === 3) {
-      throw new Error(`${containerSelector}: нет пункта "${optionText}"`);
+  await waitChosenHasOption(page, containerSelector, optionText);
+  await trigger.click();
+  const search = container.locator('.chosen-search input');
+  if (await search.count()) {
+    const editable = await search.first().isEditable().catch(() => false);
+    if (editable) {
+      await search.first().fill(optionText);
     }
   }
+
+  const option = container.locator('li.active-result').filter({ hasText: optionText }).first();
+  await option.click();
+  await page.keyboard.press('Escape');
+  await waitLoadersIfAny(page);
+  await expect(trigger).toContainText(optionText, { timeout: 15000 });
 }
 
 function addDays(dateStr, days) {
@@ -292,37 +325,35 @@ async function checkFreightOrderFields(page) {
   return { empty, freightBackNoSeats };
 }
 
-(async () => {
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-dev-shm-usage'],
-  });
-  const context = await browser.newContext({
-    viewport: { width: 1280, height: 800 },
-    locale: 'ru-RU',
-    timezoneId: 'Europe/Moscow',
-  });
-  const page = await context.newPage();
+async function runConstruct(page) {
   let currentStep = '';
 
   try {
   currentStep = 'Переход на сайт';
-  await page.goto('https://b2b.fstravel.com/search_tour', { waitUntil: 'networkidle', timeout: 60000 });
-  await page.waitForTimeout(3000);
+  await page.goto('/search_tour', { waitUntil: 'load', timeout: 60000 });
+  await afterStep(page, async () => {
+    await expect(page.locator('a.login-action:has-text("Вход")')).toBeVisible({ timeout: 60000 });
+  });
 
   currentStep = 'Авторизация на сайте';
-  const loginBtn = page.locator('a.login-action:has-text("Вход")');
-  await loginBtn.waitFor({ state: 'visible', timeout: 30000 });
-  await loginBtn.click();
-  await page.getByLabel('Краткое имя').waitFor({ state: 'visible', timeout: 10000 });
+  if (!process.env.LOGIN || !process.env.PASSWORD) {
+    throw new Error('LOGIN или PASSWORD пустые. Запусти из GitLabTest или проверь .env рядом со скриптом.');
+  }
+  await page.locator('a.login-action:has-text("Вход")').click();
   await page.getByLabel('Краткое имя').fill(process.env.LOGIN);
   await page.getByLabel('Пароль').fill(process.env.PASSWORD);
   await page.locator('button:has-text("Войти")').click();
-  await page.waitForTimeout(3000);
+  await afterStep(page, async () => {
+    await expect(page.getByLabel('Краткое имя')).toBeHidden({ timeout: 30000 });
+  });
+  await reloadIfForbidden(page);
 
   currentStep = 'Переход на конструктор заявки';
-  await page.goto('https://b2b.fstravel.com/cl_wizard?', { waitUntil: 'networkidle', timeout: 60000 });
-  await page.waitForTimeout(2000);
+  await page.goto('/cl_wizard?', { waitUntil: 'load', timeout: 60000 });
+  await reloadIfForbidden(page);
+  await afterStep(page, async () => {
+    await expect(page.locator('#cl_wizard')).toBeVisible({ timeout: 30000 });
+  });
 
   currentStep = 'Выбор города отправления Москва';
   const cityTrigger = page.locator('#cl_wizard > table.std.container.who_where > tbody > tr:nth-child(1) > td > table > tbody > tr:nth-child(1) > td:nth-child(2) > div > a');
@@ -343,7 +374,12 @@ async function checkFreightOrderFields(page) {
   ).catch(() => null);
   await selectChosen(page, '#STATE_chosen', 'Египет');
   await countryResponse;
-  await waitAfterAction(page, 2000);
+  if (await waitCircleAppear(page, 3000)) {
+    await waitLoadersIfAny(page);
+  }
+  await afterStep(page, async () => {
+    await expect(page.locator('#STATE_chosen a.chosen-single')).toContainText('Египет');
+  });
   await page.waitForFunction(() => {
     const select = document.querySelector('select[name="TOURINC"]');
     return select && select.options && select.options.length > 1;
@@ -552,15 +588,17 @@ async function checkFreightOrderFields(page) {
   await freightOrderBtn.click();
   await page.locator('#edit_order').waitFor({ state: 'visible', timeout: 60000 });
   await page.locator('#ORDER_TOWNFROM_chosen').waitFor({ state: 'visible', timeout: 60000 });
-  await waitAfterAction(page, 2000);
-  await page.waitForFunction(() => {
-    const box = document.querySelector('#ORDER_TOWNFROM_chosen');
-    const select = box && box.previousElementSibling;
-    return Boolean(select && select.tagName === 'SELECT' && select.options && select.options.length > 1);
-  }, { timeout: 60000 });
+  if (await waitCircleAppear(page, 3000)) {
+    await waitLoadersIfAny(page);
+  }
+  await waitLoadersIfAny(page);
+  await waitChosenHasOption(page, '#ORDER_TOWNFROM_chosen', 'Москва', 30000);
 
   currentStep = 'Выбор города вылета Москва';
   await selectChosen(page, '#ORDER_TOWNFROM_chosen', 'Москва');
+  await afterStep(page, async () => {
+    await expect(page.locator('#ORDER_TOWNFROM_chosen a.chosen-single')).toContainText('Москва');
+  });
 
   currentStep = 'Проверка фильтров транспорта туда';
   await ensureOutboundFreightFilters(page);
@@ -679,8 +717,6 @@ async function checkFreightOrderFields(page) {
   }
   console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
   await notifyBron({ name: 'Construct', ok: true, orderNumber, claimUrl });
-
-  await browser.close();
   } catch (err) {
     let pageUrl = 'недоступен';
     try {
@@ -688,8 +724,8 @@ async function checkFreightOrderFields(page) {
     } catch (_) {}
     console.error(`❌ Ошибка на шаге "${currentStep}": ${err.message}\nURL: ${pageUrl}`);
     await notifyBron({ name: 'Construct', ok: false, step: currentStep, error: err.message, url: pageUrl });
-    try {
-      await browser.close();
-    } catch (_) {}
+    throw err;
   }
-})();
+}
+
+module.exports = { runConstruct };

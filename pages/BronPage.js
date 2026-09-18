@@ -118,6 +118,29 @@ class BronPage {
     await this.bookButton.click();
   }
 
+  async selectFlight() {
+    const flightRadio = this.page.locator('#gdsGrid input[type="radio"][name="freight4table"]').first();
+    await flightRadio.waitFor({ state: 'attached', timeout: 15000 });
+    await flightRadio.scrollIntoViewIfNeeded();
+    await flightRadio.check({ force: true });
+    await this.page.waitForTimeout(1000);
+  }
+
+  async openClaim(orderNumber, claimUrl) {
+    if (orderNumber === 'не найден') {
+      throw new Error('Номер заявки не найден');
+    }
+    if (!claimUrl) {
+      throw new Error('Нет ссылки «Посмотреть заявку»');
+    }
+    await this.page.goto(claimUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await this.page.waitForFunction(
+      (num) => document.body.innerText.includes(num),
+      orderNumber,
+      { timeout: 30000 },
+    );
+  }
+
   async waitClaim() {
     await this.page.waitForFunction(
       () => /Номер вашей заявки:\s*\d+/.test(document.body.innerText),

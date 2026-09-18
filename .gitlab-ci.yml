@@ -1,5 +1,5 @@
-# Ветка lab. Секреты: LOGIN, PASSWORD, BAND_WEBHOOK (Masked).
-# Скрипты в корне. Джоба сама выходит после последнего node.
+# Секреты: LOGIN, PASSWORD, BAND_WEBHOOK (Masked).
+# Запуск: CI/CD → Pipelines → Run pipeline (web).
 
 stages:
   - test
@@ -23,16 +23,8 @@ test:playwright:
     - npm config set registry "https://nexus.fstravel.com/repository/proxy-npm/"
     - npm config set replace-registry-host always
     - npm ci --cache .npm --prefer-offline
-  timeout: 30m
+  timeout: 90m
   script:
-    - node b2bVietnamBron.js
-    - npx playwright test --config=playwright.egypt.config.js
-    - node b2bGDSBron.js
-    - node b2bHotelBron.js
-    - node b2bCharterBY.js
-    - node b2bCharterAsia.js
-    - node b2bConstruct.js
+    - npx playwright test --config=playwright.bron.config.js
   rules:
-    - if: $CI_COMMIT_BRANCH == "lab"
     - if: $CI_PIPELINE_SOURCE == "web"
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
