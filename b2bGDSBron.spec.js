@@ -1,7 +1,6 @@
 const path = require('path');
 const { test, expect } = require('@playwright/test');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
-const { setAvailableDate } = require('./object/zebraDatePicker.cjs');
 const { notifyBron } = require('./notify.cjs');
 const { SearchTourBronPage } = require('./pages/SearchTourBronPage.js');
 const { BronPage } = require('./pages/BronPage.js');
@@ -48,11 +47,8 @@ test.describe('GDS', () => {
       });
 
       currentStep = 'Установка даты вылета';
-      let selectedCheckin = await setAvailableDate(page, 'CHECKIN_BEG');
+      let selectedCheckin = await search.setCheckinGds();
       console.log('Выбрана дата вылета:', selectedCheckin);
-      await search.afterStep(async () => {
-        await expect(search.checkin).toHaveValue(selectedCheckin);
-      });
 
       currentStep = 'Выбор количества взрослых: 1';
       await search.pickAdults('1');

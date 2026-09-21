@@ -1,6 +1,13 @@
 const { expect } = require('@playwright/test');
-const { setDate: setZebraDate, setAvailableDate } = require('../object/zebraDatePicker.cjs');
+const { setAvailableDate, setDateDirect } = require('../object/zebraDatePicker.cjs');
 const { SearchTourBronPage } = require('./SearchTourBronPage.js');
+
+function addDays(dateStr, days) {
+  const [d, m, y] = dateStr.split('.').map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + days);
+  return `${String(dt.getDate()).padStart(2, '0')}.${String(dt.getMonth() + 1).padStart(2, '0')}.${dt.getFullYear()}`;
+}
 
 class HotelSearchPage {
   constructor(page) {
@@ -14,6 +21,7 @@ class HotelSearchPage {
     this.groupCheckbox = page.locator('label.hotelgroup:has-text("группировать результаты") input[name="PARTITION_PRICE"]');
     this.table = page.locator('#scrollto');
     this.price = page.locator('span.price.bron.price_button').first();
+    this.searchBtn = page.locator('button.load:has-text("Искать")').first();
   }
 
   async goto() {
@@ -58,29 +66,77 @@ class HotelSearchPage {
     });
   }
 
+  async hotelNights() {
+    const raw = await this.page.locator('input[name="NIGHTS_FROM"], select[name="NIGHTS_FROM"]').first().inputValue().catch(() => '');
+    const nights = parseInt(raw, 10);
+    return nights > 0 ? nights : 7;
+  }
+
+  async applyHotelDate(date) {
+    await this.core.closeCalendar();
+    const endDate = addDays(date, await this.hotelNights());
+    await setDateDirect(this.page, 'CHECKIN_BEG', date);
+    if (await this.page.locator('input[name="CHECKIN_END"]').count()) {
+      await setDateDirect(this.page, 'CHECKIN_END', endDate);
+    }
+    await this.core.waitAfterFilterAjax(3000, 15000);
+    if ((await this.checkin.inputValue()) !== date) {
+      await setDateDirect(this.page, 'CHECKIN_BEG', date);
+      if (await this.page.locator('input[name="CHECKIN_END"]').count()) {
+        await setDateDirect(this.page, 'CHECKIN_END', endDate);
+      }
+    }
+    await expect(this.checkin).toHaveValue(date);
+    return date;
+  }
+
   async setCheckin() {
-    const selected = await setAvailableDate(this.page, 'CHECKIN_BEG', '#ADC6F5');
-    await this.core.afterStep(async () => {
-      await expect(this.checkin).toHaveValue(selected);
-    });
-    return selected;
+    let lastErr;
+    for (let i = 1; i <= 5; i++) {
+      try {
+        const selected = await setAvailableDate(this.page, 'CHECKIN_BEG', '#ADC6F5');
+        await this.applyHotelDate(selected);
+        await this.logHotelFilters(`после даты, попытка ${i}`);
+        return selected;
+      } catch (err) {
+        lastErr = err;
+        console.log(`Дата заезда попытка ${i}/5: ${err.message}`);
+        await this.core.closeCalendar();
+      }
+    }
+    throw lastErr || new Error('Дата заезда не установилась за 5 попыток');
+  }
+
+  async logHotelFilters(where) {
+    const country = await this.core.chosenText(this.country);
+    const product = await this.core.chosenText(this.productType);
+    const program = await this.core.chosenText(this.program);
+    const adults = await this.core.chosenText(this.adults);
+    const date = await this.checkin.inputValue().catch(() => '');
+    console.log(`[отель ${where}] страна="${country}" продукт="${product}" программа="${program}" взрослые="${adults}" дата="${date}"`);
   }
 
   async selectAdults2() {
-    await this.adults.locator('.chosen-single').click();
-    await this.adults.locator('.active-result:has-text("2")').click();
-    await this.core.afterStep(async () => {
-      await this.core.assertChosenFilled(this.adults, '2');
-    });
+    await this.core.closeCalendar();
+    if (await this.core.chosenHas(this.adults, '2')) {
+      await this.logHotelFilters('взрослые уже 2');
+      return;
+    }
+    await this.adults.locator('a.chosen-single').first().click({ timeout: 10000 });
+    await this.adults.locator('.active-result:has-text("2")').first().click({ timeout: 10000 });
+    await this.core.assertChosenFilled(this.adults, '2');
+    await this.core.waitAfterFilterAjax();
+    await this.logHotelFilters('после взрослых');
   }
 
   async uncheckGroupResults() {
+    await this.core.closeCalendar();
     if (await this.groupCheckbox.isChecked()) {
       await this.groupCheckbox.uncheck();
     }
-    await this.core.afterStep(async () => {
-      await expect(this.groupCheckbox).not.toBeChecked();
-    });
+    await expect(this.groupCheckbox).not.toBeChecked();
+    await this.core.waitAfterFilterAjax();
+    await this.logHotelFilters('после группировки');
   }
 
   async ensureHotelFilters(checkin, onRetry) {
@@ -95,6 +151,7 @@ class HotelSearchPage {
       else if (!(await this.core.chosenHas(this.program, 'Стандарт'))) missing = 'program';
       else if (dateVal !== date) missing = 'date';
       else if (!(await this.core.chosenHas(this.adults, '2'))) missing = 'adults';
+      await this.logHotelFilters(missing ? `перед поиском, пусто ${missing}` : 'перед поиском, все ок');
       if (!missing) {
         await this.core.assertChosenFilled(this.country, 'Таиланд');
         await this.core.assertChosenFilled(this.productType, 'Статика');
@@ -118,7 +175,7 @@ class HotelSearchPage {
         await this.core.pickFilter(this.program, 'Стандарт');
       } else if (missing === 'date') {
         onRetry('Установка даты заезда');
-        date = await setAvailableDate(this.page, 'CHECKIN_BEG', '#ADC6F5');
+        await this.applyHotelDate(date);
       } else {
         onRetry('Выбор количества взрослых');
         await this.adults.locator('.chosen-single').click();
@@ -127,12 +184,29 @@ class HotelSearchPage {
     }
   }
 
+  async clickSearchAndWait() {
+    await this.core.closeCalendar();
+    await expect(this.searchBtn).toBeVisible({ timeout: 15000 });
+    const prices = this.page.waitForResponse((res) => {
+      const url = res.url();
+      const body = res.request().postData() || '';
+      const combined = `${url} ${body}`;
+      return /samo_action=/i.test(combined) && (/PRICES/i.test(combined) || /search_hotel/.test(url));
+    }, { timeout: 90000 });
+    console.log('Жму Искать');
+    await this.searchBtn.click();
+    const res = await prices.catch(() => null);
+    if (!res && !(await this.core.waitCircleAppear(5000))) {
+      throw new Error('После «Искать» нет ответа search_hotel и кружок не появился');
+    }
+    await this.core.waitLoaders(90000);
+  }
+
   async searchUntilTable(checkin, onRetry) {
     let date = checkin;
     const maxTries = 7;
     for (let i = 0; i < maxTries; i++) {
-      await this.core.clickSearch();
-      await this.core.waitLoaders();
+      await this.clickSearchAndWait();
       const shown = await this.table.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false);
       if (shown) return date;
       if (i === maxTries - 1) {
@@ -143,7 +217,7 @@ class HotelSearchPage {
       dt.setDate(dt.getDate() + 1);
       date = `${String(dt.getDate()).padStart(2, '0')}.${String(dt.getMonth() + 1).padStart(2, '0')}.${dt.getFullYear()}`;
       onRetry(`нет #scrollto, дата ${date}`);
-      await setZebraDate(this.page, 'CHECKIN_BEG', date);
+      await this.applyHotelDate(date);
       await this.core.afterStep(async () => {
         await expect(this.checkin).toHaveValue(date);
       });

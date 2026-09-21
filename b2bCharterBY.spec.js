@@ -38,6 +38,9 @@ test.describe('CharterBY', () => {
       let selectedCheckin = await search.setCheckin();
       console.log('Выбрана дата вылета:', selectedCheckin);
 
+      currentStep = 'Выбор ночей от';
+      await search.pickNightsFrom();
+
       currentStep = 'Снятие чек-бокса группировать результаты';
       await search.uncheckGroupResults();
 

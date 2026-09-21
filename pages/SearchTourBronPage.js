@@ -1,5 +1,5 @@
 const { expect } = require('@playwright/test');
-const { setDate: setZebraDate, setAvailableDate } = require('../object/zebraDatePicker.cjs');
+const { setAvailableDate, setDateDirect } = require('../object/zebraDatePicker.cjs');
 
 function isCircleIdle() {
   const el = document.querySelector('#samo-circle-preloader');
@@ -44,9 +44,14 @@ class SearchTourBronPage {
     this.tour = page.locator('.TOURINC_chosen');
     this.adults = page.locator('.ADULT_chosen');
     this.checkin = page.locator('input[name="CHECKIN_BEG"]');
+    this.nightsFrom = page.locator('#search_tour > div.std.container > table.user_info > tbody > tr > td:nth-child(1) > table > tbody > tr.paramsFrom > td.nights > div');
     this.groupCheckbox = page.locator('label:has-text("группировать результаты")').locator('input[type="checkbox"]');
     this.promoCheckbox = page.locator('label:has-text("Не отображать PROMO")').locator('input[type="checkbox"]');
     this.price = page.locator('#scrollto td.td_price span').first();
+    this.bronRow = page.locator('#scrollto > table > tbody > tr.price_info').filter({
+      hasNot: page.locator('td.tour', { hasText: 'Dynamic package' }),
+    });
+    this.bronPrice = this.bronRow.locator('td.td_price span').first();
   }
 
   async goto() {
@@ -91,6 +96,24 @@ class SearchTourBronPage {
     return false;
   }
 
+  async clickSearchAndWait() {
+    await this.closeCalendar();
+    const btn = this.page.locator('button.load.right').first();
+    await expect(btn).toBeVisible({ timeout: 15000 });
+    const prices = this.page.waitForResponse((res) => {
+      const url = res.url();
+      if (/samo_action=PRICES/i.test(url)) return true;
+      const body = res.request().postData() || '';
+      return /\/search_tour/.test(url) && /samo_action=PRICES/i.test(body);
+    }, { timeout: 90000 });
+    await btn.click();
+    const res = await prices.catch(() => null);
+    if (!res && !(await this.waitCircleAppear(5000))) {
+      throw new Error('После «Искать» нет ответа samo_action=PRICES и кружок не появился');
+    }
+    await this.waitLoaders(90000);
+  }
+
   chosenTrigger(container) {
     return container.locator('a.chosen-single').first();
   }
@@ -105,6 +128,38 @@ class SearchTourBronPage {
   async chosenHas(container, text) {
     const actual = await this.chosenTrigger(container).innerText().catch(() => '');
     return actual.includes(text);
+  }
+
+  async chosenText(container) {
+    const raw = await this.chosenTrigger(container).innerText().catch(() => '');
+    return raw.replace(/\s+/g, ' ').trim();
+  }
+
+  async logFilters(where) {
+    const city = await this.chosenText(this.city);
+    const country = await this.chosenText(this.country);
+    const freight = await this.chosenText(this.freight);
+    const tour = await this.chosenText(this.tour);
+    const date = await this.checkin.inputValue().catch(() => '');
+    console.log(`[фильтры ${where}] город="${city}" страна="${country}" перевозка="${freight}" тур="${tour}" дата="${date}"`);
+  }
+
+  async waitAfterFilterAjax(appearMs = 1500, hideMs = 15000) {
+    if (await this.waitCircleAppear(appearMs)) {
+      await this.waitLoaders(hideMs).catch(() => {
+        console.log(`Кружок не исчез за ${hideMs} мс, иду дальше`);
+      });
+    }
+  }
+
+  async closeCalendar() {
+    await this.page.keyboard.press('Escape').catch(() => {});
+    await this.page.evaluate(() => {
+      document.querySelectorAll('.Zebra_DatePicker.dp_visible').forEach((el) => {
+        el.classList.remove('dp_visible');
+        el.style.display = 'none';
+      });
+    }).catch(() => {});
   }
 
   async pickFilter(container, optionText) {
@@ -200,28 +255,86 @@ class SearchTourBronPage {
 
   async setCheckin() {
     const selected = await setAvailableDate(this.page, 'CHECKIN_BEG', 'yesplace');
-    await this.afterStep(async () => {
-      await expect(this.checkin).toHaveValue(selected);
+    await this.closeCalendar();
+    await expect(this.checkin).toHaveValue(selected);
+    await this.logFilters('после даты');
+    return selected;
+  }
+
+  async pickNightsFrom() {
+    console.log('Ставлю ночей от: 7, иначе 11');
+    await this.page.keyboard.press('Escape').catch(() => {});
+    const result = await this.page.evaluate(() => {
+      const userSel = '#search_tour > div.std.container > table.user_info > tbody > tr > td:nth-child(1) > table > tbody > tr.paramsFrom > td.nights > div';
+      const wrap = document.querySelector(userSel) || document.querySelector('td.nights') || document.querySelector('select[name="NIGHTS_FROM"]');
+      if (!wrap) {
+        const names = [...document.querySelectorAll('select[name]')].map((s) => s.getAttribute('name')).join(', ');
+        return { ok: false, available: `поле ночей не найдено. select: ${names || 'нет'}` };
+      }
+      const select = wrap.tagName === 'SELECT' ? wrap : wrap.querySelector('select');
+      if (!select) return { ok: false, available: 'в td.nights нет select' };
+      const texts = [...select.options].map((o) => (o.textContent || '').trim()).filter(Boolean);
+      const want = texts.includes('7') ? '7' : (texts.includes('11') ? '11' : null);
+      if (!want) return { ok: false, available: texts.join(' | ') || 'пусто' };
+      const opt = [...select.options].find((o) => (o.textContent || '').trim() === want);
+      if (window.jQuery) {
+        window.jQuery(select).val(opt.value).trigger('chosen:updated').trigger('change');
+      } else {
+        select.value = opt.value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        const span = (wrap.closest ? wrap : select.parentElement)?.querySelector?.('a.chosen-single span');
+        if (span) span.textContent = want;
+      }
+      return { ok: true, picked: want };
     });
+    if (!result.ok) {
+      throw new Error(`В «ночей от» нет 7 и нет 11. ${result.available}`);
+    }
+    console.log('Ночей от:', result.picked);
+    return result.picked;
+  }
+
+  async nightsIs7or11() {
+    return this.page.evaluate(() => {
+      const select = document.querySelector('select[name="NIGHTS_FROM"]')
+        || document.querySelector('td.nights select');
+      if (!select) return false;
+      const text = (select.options[select.selectedIndex]?.textContent || '').trim();
+      return text === '7' || text === '11' || select.value === '7' || select.value === '11';
+    });
+  }
+
+  async setCheckinGds() {
+    const selected = await setAvailableDate(this.page, 'CHECKIN_BEG');
+    await this.closeCalendar();
+    await expect(this.checkin).toHaveValue(selected);
+    await this.waitAfterFilterAjax(5000);
+    await this.logFilters('после даты');
     return selected;
   }
 
   async uncheckGroupResults() {
-    if (await this.groupCheckbox.isChecked()) {
-      await this.groupCheckbox.uncheck();
+    await this.closeCalendar();
+    if (await this.groupCheckbox.count() === 0) {
+      console.log('Чекбокс группировки нет, пропускаю');
+      return;
     }
-    await this.afterStep(async () => {
-      await expect(this.groupCheckbox).not.toBeChecked();
-    });
+    const checked = await this.groupCheckbox.isChecked({ timeout: 5000 }).catch(() => false);
+    if (checked) {
+      await this.groupCheckbox.uncheck({ timeout: 5000 });
+    }
+    await expect(this.groupCheckbox).not.toBeChecked({ timeout: 5000 });
+    await this.waitAfterFilterAjax();
+    await this.logFilters('после группировки');
   }
 
   async checkHidePromo() {
     if (!(await this.promoCheckbox.isChecked())) {
       await this.promoCheckbox.check();
     }
-    await this.afterStep(async () => {
-      await expect(this.promoCheckbox).toBeChecked();
-    });
+    await expect(this.promoCheckbox).toBeChecked();
+    await this.waitAfterFilterAjax();
+    await this.logFilters('после PROMO');
   }
 
   async clickSearch() {
@@ -231,12 +344,24 @@ class SearchTourBronPage {
     });
   }
 
+  async shiftCheckin(date) {
+    const open = this.page.locator('.Zebra_DatePicker.dp_visible');
+    if (await open.count()) {
+      await this.page.keyboard.press('Escape');
+      await open.waitFor({ state: 'hidden', timeout: 2000 }).catch(() => {});
+    }
+    await setDateDirect(this.page, 'CHECKIN_BEG', date);
+    if (await this.page.locator('input[name="CHECKIN_END"]').count()) {
+      await setDateDirect(this.page, 'CHECKIN_END', date);
+    }
+  }
+
   async ensureEgyptFilters(checkin, onRetry) {
     let date = checkin;
     let refills = 0;
 
     while (true) {
-      await this.waitLoaders();
+      await this.waitAfterFilterAjax();
 
       const dateVal = await this.checkin.inputValue();
       let missing = null;
@@ -245,6 +370,7 @@ class SearchTourBronPage {
       else if (!(await this.chosenHas(this.freight, 'Чартер/блочная перевозка'))) missing = 'freight';
       else if (!(await this.chosenHas(this.tour, 'Sharm'))) missing = 'tour';
       else if (dateVal !== date) missing = 'date';
+      await this.logFilters(missing ? `перед поиском, пусто ${missing}` : 'перед поиском, все ок');
 
       if (!missing) {
         await this.assertChosenFilled(this.city, 'Москва');
@@ -285,18 +411,17 @@ class SearchTourBronPage {
     const maxTries = 7;
 
     for (let i = 0; i < maxTries; i++) {
-      await this.clickSearch();
-      await this.waitLoaders();
-      const shown = await this.price.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false);
+      await this.clickSearchAndWait();
+      const shown = await this.bronPrice.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false);
       if (shown) return date;
 
       if (i === maxTries - 1) {
-        throw new Error(`В #scrollto нет цен за ${maxTries} поисков`);
+        throw new Error(`В #scrollto нет цен без «Dynamic package» за ${maxTries} поисков`);
       }
 
       date = nextDay(date);
       onRetry(`нет цены в #scrollto, дата ${date}`);
-      await setZebraDate(this.page, 'CHECKIN_BEG', date);
+      await this.shiftCheckin(date);
       await this.afterStep(async () => {
         await expect(this.checkin).toHaveValue(date);
       });
@@ -306,14 +431,22 @@ class SearchTourBronPage {
   }
 
   async expectPriceVisible() {
-    await expect(this.price).toBeVisible({ timeout: 5000 });
+    await expect(this.bronPrice).toBeVisible({ timeout: 5000 });
+  }
+
+  async assertTourNotDynamic() {
+    const row = this.bronRow.first();
+    await expect(row, { message: 'Нет строки без «Dynamic package» в td.tour' }).toBeVisible({ timeout: 5000 });
+    await expect(row.locator('td.tour')).not.toContainText('Dynamic package');
+    return row.locator('td.td_price span').first();
   }
 
   async openBron(context) {
-    await this.price.scrollIntoViewIfNeeded();
+    const price = await this.assertTourNotDynamic();
+    await price.scrollIntoViewIfNeeded();
     const [bookingPage] = await Promise.all([
       context.waitForEvent('page', { timeout: 15000 }).catch(() => null),
-      this.price.click({ timeout: 10000 }),
+      price.click({ timeout: 10000 }),
     ]);
     return bookingPage || this.page;
   }
@@ -393,7 +526,7 @@ class SearchTourBronPage {
     let date = checkin;
     let refills = 0;
     while (true) {
-      await this.waitLoaders();
+      await this.waitAfterFilterAjax();
       const dateVal = await this.checkin.inputValue();
       let missing = null;
       if (!(await this.chosenHas(this.city, 'Москва'))) missing = 'city';
@@ -402,6 +535,7 @@ class SearchTourBronPage {
       else if (!(await this.chosenHas(this.tour, tourName))) missing = 'tour';
       else if (dateVal !== date) missing = 'date';
       else if (!(await this.adultsIsOne())) missing = 'adults';
+      await this.logFilters(missing ? `GDS перед поиском, пусто ${missing}` : 'GDS перед поиском, все ок');
       if (!missing) {
         await this.assertChosenFilled(this.city, 'Москва');
         await this.assertChosenFilled(this.country, 'Турция');
@@ -433,7 +567,7 @@ class SearchTourBronPage {
         await this.pickAdults('1');
       } else {
         onRetry('Установка даты вылета');
-        date = await setAvailableDate(this.page, 'CHECKIN_BEG');
+        date = await this.setCheckinGds();
       }
     }
   }
@@ -485,7 +619,9 @@ class SearchTourBronPage {
       let missing = null;
       if (!(await this.chosenHas(this.city, 'Минск'))) missing = 'city';
       else if (!(await this.chosenHas(this.country, 'Египет'))) missing = 'country';
+      else if (!(await this.nightsIs7or11())) missing = 'nights';
       else if (dateVal !== date) missing = 'date';
+      await this.logFilters(missing ? `BY перед поиском, пусто ${missing}` : 'BY перед поиском, все ок');
       if (!missing) {
         await this.assertChosenFilled(this.city, 'Минск');
         await this.assertChosenFilled(this.country, 'Египет');
@@ -502,18 +638,22 @@ class SearchTourBronPage {
       } else if (missing === 'country') {
         onRetry('Выбор страны Египет');
         await this.pickCountry(this.country, 'Египет');
+      } else if (missing === 'nights') {
+        onRetry('Выбор ночей от 7 или 11');
+        await this.pickNightsFrom();
       } else {
         onRetry('Установка даты вылета');
-        date = await setAvailableDate(this.page, 'CHECKIN_BEG', 'yesplace');
+        date = await this.setCheckin();
       }
     }
   }
 
   async openBronOrSameTab(context) {
-    await this.price.scrollIntoViewIfNeeded();
+    const price = await this.assertTourNotDynamic();
+    await price.scrollIntoViewIfNeeded();
     const newPagePromise = context.waitForEvent('page', { timeout: 30000 }).catch(() => null);
     const sameTabNavPromise = this.page.waitForURL(/\/bron/, { timeout: 60000 }).catch(() => null);
-    await this.price.click({ timeout: 10000 });
+    await price.click({ timeout: 10000 });
     const newPage = await newPagePromise;
     if (newPage && !newPage.isClosed()) {
       await newPage.waitForURL(/\/bron/, { timeout: 60000 }).catch(() => {});
@@ -531,16 +671,15 @@ class SearchTourBronPage {
         onRetry('взрослые сбросились на 2, снова 1');
         await this.pickAdults('1');
       }
-      await this.clickSearch();
-      await this.waitLoaders();
-      const shown = await this.price.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false);
+      await this.clickSearchAndWait();
+      const shown = await this.bronPrice.waitFor({ state: 'visible', timeout: 5000 }).then(() => true).catch(() => false);
       if (shown) return date;
       if (i === maxTries - 1) {
-        throw new Error(`В #scrollto нет цен за ${maxTries} поисков`);
+        throw new Error(`В #scrollto нет цен без «Dynamic package» за ${maxTries} поисков`);
       }
       date = nextDay(date);
       onRetry(`нет цены в #scrollto, пробуем дату ${date}`);
-      await setZebraDate(this.page, 'CHECKIN_BEG', date);
+      await this.shiftCheckin(date);
       await this.waitLoaders();
       const actualDate = await this.checkin.inputValue();
       if (actualDate) date = actualDate;
