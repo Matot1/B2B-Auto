@@ -77,7 +77,7 @@ test.describe('CharterAsia', () => {
       await bron.fillTouristAsia(2);
 
       currentStep = 'Пересчёт стоимости';
-      await bron.clickAndWait(bron.page.locator('button.calc:has-text("Пересчитать")'), 'fstravel.asia');
+      await bron.clickAndWait(bron.calcButton, 'fstravel.asia');
 
       currentStep = 'Бронирование';
       const bookBtn = await bron.waitBookEnabled(6);

@@ -59,8 +59,7 @@ test.describe('Hotel', () => {
       const opened = await search.openBron(context);
       bron = new BronPage(opened);
       await search.core.afterStep(async () => {
-        await expect(bron.page.locator('table.tour_info.res')).toBeVisible({ timeout: 30000 });
-        await expect(bron.page.locator('table.tour_info.res')).toHaveAttribute('data-checkin', selectedCheckin);
+        await bron.expectTourCheckin(selectedCheckin);
       });
 
       currentStep = 'Заполнение данных туриста 1';

@@ -36,20 +36,7 @@ test.describe('Фильтр "Тип тура"', () => {
         return;
       }
 
-      const tourTexts = await page.evaluate(() => {
-        const rows = document.querySelectorAll('tr[data-state]');
-        return Array.from(rows).map(r => {
-          const td = r.querySelector('td.tour');
-          if (!td) return '';
-          for (const n of td.childNodes) {
-            if (n.nodeType === 3) {
-              const t = n.textContent.trim();
-              if (t) return t;
-            }
-          }
-          return '';
-        }).filter(Boolean);
-      });
+      const tourTexts = await searchPage.getTourCountryTexts();
 
       expect(tourTexts.length).toBeGreaterThan(0);
 

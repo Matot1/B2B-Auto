@@ -74,7 +74,7 @@ test.describe('CharterBY', () => {
       await bron.fillBuyerBy();
 
       currentStep = 'Пересчёт стоимости';
-      await bron.clickAndWait(bron.page.locator('button.calc:has-text("Пересчитать")'), 'fstravel.by');
+      await bron.clickAndWait(bron.calcButton, 'fstravel.by');
 
       currentStep = 'Бронирование';
       if (bron.page.isClosed()) {

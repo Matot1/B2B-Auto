@@ -44,6 +44,7 @@ class SearchTourBronPage {
     this.tour = page.locator('.TOURINC_chosen');
     this.tourGroup = page.locator('#search_tour > div.std.container > table.direction.panel > tbody > tr:nth-child(1) > td:nth-child(2) > table > tbody > tr:nth-child(1) > td.tour_right');
     this.adults = page.locator('.ADULT_chosen');
+    this.adultSelect = page.locator('select[name="ADULT"]');
     this.checkin = page.locator('input[name="CHECKIN_BEG"]');
     this.nightsFrom = page.locator('#search_tour > div.std.container > table.user_info > tbody > tr > td:nth-child(1) > table > tbody > tr.paramsFrom > td.nights > div');
     this.groupCheckbox = page.locator('label:has-text("группировать результаты")').locator('input[type="checkbox"]');
@@ -512,7 +513,7 @@ class SearchTourBronPage {
       }
       opt.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     }, value);
-    const adultValue = await this.page.locator('select[name="ADULT"]').inputValue();
+    const adultValue = await this.adultSelect.inputValue();
     if (adultValue !== value) {
       throw new Error(`После выбора взрослых ожидалось "${value}", получено "${adultValue}"`);
     }
@@ -520,7 +521,7 @@ class SearchTourBronPage {
   }
 
   async adultsIsOne() {
-    const selectVal = await this.page.locator('select[name="ADULT"]').inputValue().catch(() => '');
+    const selectVal = await this.adultSelect.inputValue().catch(() => '');
     const text = (await this.chosenTrigger(this.adults).innerText().catch(() => '')).trim();
     return selectVal === '1' && text === '1';
   }
@@ -545,7 +546,7 @@ class SearchTourBronPage {
         await this.assertChosenFilled(this.freight, 'GDS');
         await this.assertChosenFilled(this.tour, tourName);
         await expect(this.checkin).toHaveValue(date);
-        await expect(this.page.locator('select[name="ADULT"]')).toHaveValue('1');
+        await expect(this.adultSelect).toHaveValue('1');
         await expect(this.chosenTrigger(this.adults)).toHaveText('1');
         return date;
       }

@@ -36,20 +36,7 @@ test.describe('Фильтр "Тип продукта"', () => {
     expect(lowerText).not.toContain('невозвратный');
     expect(lowerText).not.toContain('dynamic package');
 
-    const tourTexts = await page.evaluate(() => {
-      const rows = document.querySelectorAll('tr[data-state]');
-      return Array.from(rows).map(r => {
-        const td = r.querySelector('td.tour');
-        if (!td) return '';
-        for (const n of td.childNodes) {
-          if (n.nodeType === 3) {
-            const t = n.textContent.trim();
-            if (t) return t;
-          }
-        }
-        return '';
-      }).filter(Boolean);
-    });
+    const tourTexts = await searchPage.getTourCountryTexts();
 
     expect(tourTexts.length).toBeGreaterThan(0);
 
@@ -83,27 +70,7 @@ test.describe('Фильтр "Тип продукта"', () => {
       return;
     }
 
-    const rowData = await page.evaluate(() => {
-      const rows = document.querySelectorAll('tr[data-state]');
-      return Array.from(rows).map(r => {
-        const typePrice = r.querySelector('td.type_price');
-        const tour = r.querySelector('td.tour');
-
-        let tourText = '';
-        if (tour) {
-          for (const n of tour.childNodes) {
-            if (n.nodeType === 3) {
-              const t = n.textContent.trim();
-              if (t) { tourText = t; break; }
-            }
-          }
-        }
-
-        const priceText = typePrice?.textContent?.trim()?.toLowerCase() || '';
-
-        return { tourText, priceText };
-      });
-    });
+    const rowData = await searchPage.getResultPriceRows();
 
     expect(rowData.length).toBeGreaterThan(0);
 

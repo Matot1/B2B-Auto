@@ -1,3 +1,4 @@
+const { expect } = require('@playwright/test');
 const { faker } = require('@faker-js/faker/locale/ru');
 const { transliterate } = require('transliteration');
 const { setDate: setZebraDate } = require('../object/zebraDatePicker.cjs');
@@ -11,6 +12,7 @@ class BronPage {
     this.buyerAddress = page.locator('input[name="frm[phys_byer][-1][ADDRESS]"]');
     this.calcButton = page.locator('button.calc:has-text("Пересчитать")');
     this.bookButton = page.locator('button:has-text("бронировать")');
+    this.tourInfo = page.locator('table.tour_info.res');
   }
 
   static async resolve(context, page) {
@@ -41,6 +43,11 @@ class BronPage {
 
   async waitTourists() {
     await this.tourist1.waitFor({ state: 'attached', timeout: 60000 });
+  }
+
+  async expectTourCheckin(date) {
+    await expect(this.tourInfo).toBeVisible({ timeout: 30000 });
+    await expect(this.tourInfo).toHaveAttribute('data-checkin', date);
   }
 
   async getCheckin() {

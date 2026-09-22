@@ -39,10 +39,7 @@ test.describe('Фильтр "Страна"', () => {
         return;
       }
 
-      const states = await page.evaluate(() => {
-        const rows = document.querySelectorAll('tr[data-state]');
-        return [...new Set(Array.from(rows).map(r => r.getAttribute('data-state')))];
-      });
+      const states = await searchPage.getResultStates();
 
       expect(states.length).toBe(1);
       expect(states[0]).toBe(countryValue);
