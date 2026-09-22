@@ -131,7 +131,8 @@ class SearchTourBronPage {
   }
 
   async chosenText(container) {
-    const raw = await this.chosenTrigger(container).innerText().catch(() => '');
+    if (await container.count() === 0) return '';
+    const raw = await this.chosenTrigger(container).innerText({ timeout: 1000 }).catch(() => '');
     return raw.replace(/\s+/g, ' ').trim();
   }
 
@@ -263,34 +264,35 @@ class SearchTourBronPage {
 
   async pickNightsFrom() {
     console.log('Ставлю ночей от: 7, иначе 11');
-    await this.page.keyboard.press('Escape').catch(() => {});
     const result = await this.page.evaluate(() => {
       const userSel = '#search_tour > div.std.container > table.user_info > tbody > tr > td:nth-child(1) > table > tbody > tr.paramsFrom > td.nights > div';
-      const wrap = document.querySelector(userSel) || document.querySelector('td.nights') || document.querySelector('select[name="NIGHTS_FROM"]');
-      if (!wrap) {
-        const names = [...document.querySelectorAll('select[name]')].map((s) => s.getAttribute('name')).join(', ');
-        return { ok: false, available: `поле ночей не найдено. select: ${names || 'нет'}` };
-      }
-      const select = wrap.tagName === 'SELECT' ? wrap : wrap.querySelector('select');
+      const wrap = document.querySelector(userSel) || document.querySelector('td.nights > div') || document.querySelector('td.nights');
+      if (!wrap) return { ok: false, available: 'поле ночей не найдено' };
+      const td = wrap.closest ? (wrap.closest('td.nights') || wrap.parentElement) : wrap;
+      const select = (wrap.tagName === 'SELECT' ? wrap : null)
+        || wrap.querySelector('select')
+        || (td && td.querySelector('select'))
+        || document.querySelector('select[name="NIGHTS_FROM"]');
       if (!select) return { ok: false, available: 'в td.nights нет select' };
+      const was = (select.options[select.selectedIndex]?.textContent || '').trim();
       const texts = [...select.options].map((o) => (o.textContent || '').trim()).filter(Boolean);
       const want = texts.includes('7') ? '7' : (texts.includes('11') ? '11' : null);
-      if (!want) return { ok: false, available: texts.join(' | ') || 'пусто' };
+      if (!want) return { ok: false, available: texts.join(' | ') || 'пусто', was };
       const opt = [...select.options].find((o) => (o.textContent || '').trim() === want);
       if (window.jQuery) {
         window.jQuery(select).val(opt.value).trigger('chosen:updated').trigger('change');
       } else {
         select.value = opt.value;
         select.dispatchEvent(new Event('change', { bubbles: true }));
-        const span = (wrap.closest ? wrap : select.parentElement)?.querySelector?.('a.chosen-single span');
-        if (span) span.textContent = want;
       }
-      return { ok: true, picked: want };
+      const span = (wrap.querySelector ? wrap : td).querySelector('a.chosen-single span');
+      if (span) span.textContent = want;
+      return { ok: true, picked: want, was };
     });
     if (!result.ok) {
-      throw new Error(`В «ночей от» нет 7 и нет 11. ${result.available}`);
+      throw new Error(`В «ночей от» нет 7 и нет 11. Сейчас «${result.was || '—'}». ${result.available}`);
     }
-    console.log('Ночей от:', result.picked);
+    console.log(`Ночей от было ${result.was}, стало ${result.picked}`);
     return result.picked;
   }
 

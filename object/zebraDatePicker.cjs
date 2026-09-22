@@ -112,6 +112,28 @@ async function setDateUI(page, inputName, date) {
   await setDateDirect(page, inputName, date);
 }
 
+async function ensureCheckinEndCovers(page, date) {
+  await page.evaluate((val) => {
+    const end = document.querySelector('input[name="CHECKIN_END"]');
+    if (!end) return;
+    const parse = (s) => {
+      const m = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec((s || '').trim());
+      if (!m) return null;
+      return new Date(+m[3], +m[2] - 1, +m[1]).getTime();
+    };
+    const endTs = parse(end.value);
+    const begTs = parse(val);
+    if (begTs === null || (endTs !== null && endTs >= begTs)) return;
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    nativeSetter.call(end, val);
+    try {
+      const cal = JSON.parse(end.getAttribute('data-calendar'));
+      cal.start = val;
+      end.setAttribute('data-calendar', JSON.stringify(cal));
+    } catch (e) {}
+  }, date);
+}
+
 async function setDateDirect(page, inputName, date) {
   await page.evaluate(({ name, val }) => {
     const input = document.querySelector(`input[name="${name}"]`)
@@ -254,6 +276,9 @@ async function setAvailableDate(page, inputName, highlight = 'gds') {
         pickerCell = page.locator(`.Zebra_DatePicker.dp_visible td.${selected.classMark}`)
           .filter({ hasText: new RegExp(`^\\s*${selected.day}\\s*$`) });
       }
+      if (inputName === 'CHECKIN_BEG') {
+        await ensureCheckinEndCovers(page, selected.date);
+      }
       if (await pickerCell.count() > 0) {
         await pickerCell.first().scrollIntoViewIfNeeded();
         await pickerCell.first().click();
@@ -265,6 +290,9 @@ async function setAvailableDate(page, inputName, highlight = 'gds') {
       for (let t = 0; t < 3 && actual !== selected.date; t++) {
         await page.keyboard.press('Escape');
         await page.waitForTimeout(200);
+        if (inputName === 'CHECKIN_BEG') {
+          await ensureCheckinEndCovers(page, selected.date);
+        }
         await setDateDirect(page, inputName, selected.date);
         await page.waitForTimeout(400);
         actual = await valueInput.inputValue();

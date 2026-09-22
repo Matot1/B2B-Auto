@@ -14,13 +14,16 @@ export default defineConfig({
     timezoneId: 'Europe/Moscow',
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
     screenshot: 'only-on-failure',
+    headless: process.env.HEADED !== '1',
+    launchOptions: {
+      args: ['--no-sandbox', '--disable-dev-shm-usage'],
+    },
   },
   projects: [
     {
       name: 'chromium',
       use: {
         browserName: 'chromium',
-        headless: true,
       },
     },
   ],
