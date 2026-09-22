@@ -51,6 +51,21 @@ class BronCharterPage extends BronPage {
     return new BronCharterPage(base.page);
   }
 
+  bookButton(row) {
+    return this.page.locator(`#bron_info > div.top_container > div.PRICEINFO > fieldset > table:nth-child(4) > tbody > tr:nth-child(${row}) > td > button.bron`);
+  }
+
+  async waitBookEnabled(row) {
+    const button = this.bookButton(row);
+    await button.waitFor({ state: 'visible', timeout: 60000 });
+    const selector = `#bron_info > div.top_container > div.PRICEINFO > fieldset > table:nth-child(4) > tbody > tr:nth-child(${row}) > td > button.bron`;
+    await this.page.waitForFunction((sel) => {
+      const btn = document.querySelector(sel);
+      return btn && !btn.disabled;
+    }, selector, { timeout: 60000 });
+    return button;
+  }
+
   async clickAndWait(locator, hostPart, options = {}) {
     const { timeout = 60000, clickOptions = {} } = options;
     const responsePromise = this.page.waitForResponse(

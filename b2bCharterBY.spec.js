@@ -74,18 +74,13 @@ test.describe('CharterBY', () => {
       await bron.fillBuyerBy();
 
       currentStep = 'Пересчёт стоимости';
-      const bookBtn = bron.page.locator('#bron_info > div.top_container > div.PRICEINFO > fieldset > table:nth-child(4) > tbody > tr:nth-child(4) > td > button.bron');
       await bron.clickAndWait(bron.page.locator('button.calc:has-text("Пересчитать")'), 'fstravel.by');
 
       currentStep = 'Бронирование';
       if (bron.page.isClosed()) {
         bron = await BronCharterPage.resolve(context, page);
       }
-      await bookBtn.waitFor({ state: 'visible', timeout: 60000 });
-      await bron.page.waitForFunction(() => {
-        const btn = document.querySelector('#bron_info > div.top_container > div.PRICEINFO > fieldset > table:nth-child(4) > tbody > tr:nth-child(4) > td > button.bron');
-        return btn && !btn.disabled;
-      }, null, { timeout: 60000 });
+      const bookBtn = await bron.waitBookEnabled(4);
       await bron.clickAndWait(bookBtn, 'fstravel.by');
 
       currentStep = 'Подтверждение условий';

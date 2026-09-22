@@ -42,6 +42,7 @@ class SearchTourBronPage {
     this.country = page.locator('.STATEINC_chosen');
     this.freight = page.locator('.FREIGHTTYPE_chosen');
     this.tour = page.locator('.TOURINC_chosen');
+    this.tourGroup = page.locator('#search_tour > div.std.container > table.direction.panel > tbody > tr:nth-child(1) > td:nth-child(2) > table > tbody > tr:nth-child(1) > td.tour_right');
     this.adults = page.locator('.ADULT_chosen');
     this.checkin = page.locator('input[name="CHECKIN_BEG"]');
     this.nightsFrom = page.locator('#search_tour > div.std.container > table.user_info > tbody > tr > td:nth-child(1) > table > tbody > tr.paramsFrom > td.nights > div');
