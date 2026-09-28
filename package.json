@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node search_test.js"
+    "test": "node search_test.js",
+    "test:prod": "npx playwright test --config=playwright.bron.config.js",
+    "test:egypt": "npx playwright test --config=playwright.bron.config.js b2bCharterRU.spec.js",
+    "test:smoke": "node smoke-all.cjs"
   },
   "keywords": [],
   "author": "",

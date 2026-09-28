@@ -42,6 +42,14 @@ async function navigateCalendarToMonth(page, targetYear, targetMonthIndex) {
   throw new Error(`Не удалось перейти к месяцу ${MONTH_NAMES[targetMonthIndex]} ${targetYear} в календаре`);
 }
 
+async function closeCalendar(page) {
+  const picker = page.locator('.Zebra_DatePicker.dp_visible');
+  if (await picker.count()) {
+    await page.keyboard.press('Escape');
+    await picker.waitFor({ state: 'hidden', timeout: 2000 }).catch(() => {});
+  }
+}
+
 async function setDateUI(page, inputName, date) {
   const [day, month, year] = date.split('.');
   const targetYear = parseInt(year);
@@ -49,14 +57,22 @@ async function setDateUI(page, inputName, date) {
   const dayNum = String(parseInt(day, 10));
 
   const dateField = dateFieldLocator(page, inputName);
-  const dateButton = dateField.locator('xpath=../button');
-  if (await dateButton.count()) {
-    await dateButton.click();
-  } else {
-    await dateField.click();
+  const picker = page.locator('.Zebra_DatePicker.dp_visible');
+  if (await picker.count() === 0) {
+    const dateButton = dateField.locator('xpath=../button');
+    if (await dateButton.count()) {
+      await dateButton.click();
+    } else {
+      await dateField.click();
+    }
+    await page.waitForTimeout(500);
+    await picker.waitFor({ timeout: 5000 }).catch(() => {});
   }
-  await page.waitForTimeout(500);
-  await page.locator('.Zebra_DatePicker.dp_visible').waitFor({ timeout: 5000 }).catch(() => {});
+
+  if (await picker.count() === 0) {
+    await setDateDirect(page, inputName, date);
+    return;
+  }
 
   const caption = () => page.locator('.Zebra_DatePicker.dp_visible .dp_header .dp_caption');
   const nextBtn = () => page.locator('.Zebra_DatePicker.dp_visible .dp_header .dp_next');
@@ -72,10 +88,18 @@ async function setDateUI(page, inputName, date) {
         await page.waitForTimeout(500);
         return;
       }
+      await closeCalendar(page);
+      await setDateDirect(page, inputName, date);
+      return;
     }
     const curH = await caption().textContent().catch(() => '');
     const curYr = parseInt(curH.match(/(\d{4})/)?.[1] || '0');
     const curMo = MONTH_NAMES.indexOf((curH.split(',')[0] || '').trim());
+    if (!curYr || curMo < 0) {
+      await closeCalendar(page);
+      await setDateDirect(page, inputName, date);
+      return;
+    }
     const targetIdx = parseInt(month) - 1;
     if (targetYear < curYr || (targetYear === curYr && targetIdx < curMo)) {
       await prevBtn().click();
@@ -84,7 +108,49 @@ async function setDateUI(page, inputName, date) {
     }
     await page.waitForTimeout(50);
   }
-  throw new Error(`Не удалось выбрать дату ${date} в календаре`);
+  await closeCalendar(page);
+  await setDateDirect(page, inputName, date);
+}
+
+async function ensureCheckinEndCovers(page, date) {
+  await page.evaluate((val) => {
+    const end = document.querySelector('input[name="CHECKIN_END"]');
+    if (!end) return;
+    const parse = (s) => {
+      const m = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec((s || '').trim());
+      if (!m) return null;
+      return new Date(+m[3], +m[2] - 1, +m[1]).getTime();
+    };
+    const endTs = parse(end.value);
+    const begTs = parse(val);
+    if (begTs === null || (endTs !== null && endTs >= begTs)) return;
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    nativeSetter.call(end, val);
+    try {
+      const cal = JSON.parse(end.getAttribute('data-calendar'));
+      cal.start = val;
+      end.setAttribute('data-calendar', JSON.stringify(cal));
+    } catch (e) {}
+  }, date);
+}
+
+async function forceCheckinPair(page, date) {
+  await page.evaluate((val) => {
+    const write = (name) => {
+      const input = document.querySelector(`input[name="${name}"]`);
+      if (!input) return;
+      try {
+        const cal = JSON.parse(input.getAttribute('data-calendar') || '{}');
+        cal.start = val;
+        input.setAttribute('data-calendar', JSON.stringify(cal));
+      } catch (e) {}
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      nativeSetter.call(input, val);
+      if (window.jQuery) window.jQuery(input).val(val);
+    };
+    write('CHECKIN_END');
+    write('CHECKIN_BEG');
+  }, date);
 }
 
 async function setDateDirect(page, inputName, date) {
@@ -116,7 +182,7 @@ async function setDate(page, inputName, date) {
   }
 }
 
-async function setAvailableDate(page, inputName, highlight = 'gds') {
+async function setAvailableDate(page, inputName, highlight = 'gds', weekdays = null) {
   const useColor = typeof highlight === 'string' && highlight.startsWith('#');
   const marks = useColor ? [] : (Array.isArray(highlight) ? highlight : [highlight]);
   const colorHex = useColor ? highlight : null;
@@ -141,7 +207,7 @@ async function setAvailableDate(page, inputName, highlight = 'gds') {
   const nextBtn = () => page.locator('.Zebra_DatePicker.dp_visible .dp_header .dp_next');
 
   for (let i = 0; i < 24; i++) {
-    const selected = await page.evaluate(({ min, marks: classMarks, color }) => {
+    const selected = await page.evaluate(({ min, marks: classMarks, color, weekdays: allowedDays }) => {
       const picker = document.querySelector('.Zebra_DatePicker.dp_visible');
       if (!picker) return { found: false };
 
@@ -197,7 +263,12 @@ async function setAvailableDate(page, inputName, highlight = 'gds') {
       const cell = cells.find((td) => {
         const parts = getCellParts(td, captionYear, captionMonth);
         if (!parts.day) return false;
-        return compare(parts, min) > 0;
+        if (compare(parts, min) <= 0) return false;
+        if (allowedDays && allowedDays.length) {
+          const weekday = new Date(parts.year, parts.month - 1, parts.day).getDay();
+          if (!allowedDays.includes(weekday)) return false;
+        }
+        return true;
       });
       if (!cell) return { found: false };
 
@@ -210,20 +281,28 @@ async function setAvailableDate(page, inputName, highlight = 'gds') {
         classMark: classMarks.find((m) => cell.classList.contains(m)) || null,
         day: parts.day,
       };
-    }, { min: minParts, marks, color: colorHex });
+    }, { min: minParts, marks, color: colorHex, weekdays: weekdays || [] });
 
     if (selected?.found) {
+      const [sd, sm, sy] = selected.date.split('.').map(Number);
+      if (
+        sy < minParts.year
+        || (sy === minParts.year && sm < minParts.month)
+        || (sy === minParts.year && sm === minParts.month && sd <= minParts.day)
+      ) {
+        await nextBtn().click();
+        await page.waitForTimeout(400);
+        continue;
+      }
       const cellClass = selected.dateClass || dateStringToClass(selected.date);
       let pickerCell = page.locator(`.Zebra_DatePicker.dp_visible td.${cellClass}`);
       if (await pickerCell.count() === 0 && selected.classMark) {
         pickerCell = page.locator(`.Zebra_DatePicker.dp_visible td.${selected.classMark}`)
           .filter({ hasText: new RegExp(`^\\s*${selected.day}\\s*$`) });
       }
-      if (await pickerCell.count() === 0) {
-        pickerCell = page.locator('.Zebra_DatePicker.dp_visible table.dp_daypicker td:not(.dp_disabled):not(.dp_weekend_disabled)')
-          .filter({ hasText: new RegExp(`^\\s*${selected.day}\\s*$`) });
+      if (inputName === 'CHECKIN_BEG') {
+        await ensureCheckinEndCovers(page, selected.date);
       }
-
       if (await pickerCell.count() > 0) {
         await pickerCell.first().scrollIntoViewIfNeeded();
         await pickerCell.first().click();
@@ -232,9 +311,24 @@ async function setAvailableDate(page, inputName, highlight = 'gds') {
 
       const valueInput = dateFieldLocator(page, inputName);
       let actual = await valueInput.inputValue();
-      if (actual !== selected.date) {
-        await setDateDirect(page, inputName, selected.date);
+      if (actual !== selected.date && inputName === 'CHECKIN_BEG') {
+        await page.evaluate(() => {
+          document.querySelectorAll('.Zebra_DatePicker.dp_visible').forEach((el) => {
+            el.classList.remove('dp_visible');
+            el.style.display = 'none';
+          });
+        });
+        await forceCheckinPair(page, selected.date);
         await page.waitForTimeout(300);
+        actual = await valueInput.inputValue();
+      }
+      for (let t = 0; t < 3 && actual !== selected.date; t++) {
+        if (inputName === 'CHECKIN_BEG') {
+          await forceCheckinPair(page, selected.date);
+        } else {
+          await setDateDirect(page, inputName, selected.date);
+        }
+        await page.waitForTimeout(400);
         actual = await valueInput.inputValue();
       }
 
@@ -249,7 +343,8 @@ async function setAvailableDate(page, inputName, highlight = 'gds') {
   }
 
   const label = useColor ? `цветом ${highlight}` : `классом "${highlight}"`;
-  throw new Error(`В календаре нет дат с ${label} строго после ${minLabel}`);
+  const daysNote = Array.isArray(weekdays) && weekdays.length ? ' в четверг или воскресенье' : '';
+  throw new Error(`В календаре нет дат с ${label}${daysNote} строго после ${minLabel}`);
 }
 
-module.exports = { setDate, setAvailableDate, setDateDirect };
+module.exports = { setDate, setAvailableDate, setDateDirect, ensureCheckinEndCovers, forceCheckinPair };
