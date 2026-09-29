@@ -35,11 +35,12 @@ function postOnce(webhookUrl, data) {
   });
 }
 
-async function sendMattermost(message) {
-  const webhookUrl = process.env.BAND_WEBHOOK || process.env.MATTERMOST_WEBHOOK;
+async function sendMattermost(message, envName = 'BAND_WEBHOOK') {
+  const webhookUrl = process.env[envName]
+    || (envName === 'BAND_WEBHOOK' ? process.env.MATTERMOST_WEBHOOK : '');
 
   if (!webhookUrl) {
-    console.error('BAND_WEBHOOK / MATTERMOST_WEBHOOK не задан в .env');
+    console.error(`${envName} не задан в .env`);
     return;
   }
 

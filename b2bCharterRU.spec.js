@@ -5,8 +5,8 @@ const { notifyBron } = require('./notify.cjs');
 const { SearchTourBronPage } = require('./pages/SearchTourBronPage.js');
 const { BronPage } = require('./pages/BronPage.js');
 
-test.describe('Egypt', () => {
-  test('бронирование Египет чартер Sharm', async ({ page, context }) => {
+test.describe('Charter', () => {
+  test('бронирование Таиланд чартер', async ({ page, context }) => {
     test.setTimeout(15 * 60 * 1000);
 
     const search = new SearchTourBronPage(page);
@@ -49,7 +49,7 @@ test.describe('Egypt', () => {
       await search.checkInstantConfirm();
 
       currentStep = 'Проверка всех фильтров перед поиском';
-      selectedCheckin = await search.ensureEgyptFilters(selectedCheckin, (name) => {
+      selectedCheckin = await search.ensureCharterFilters(selectedCheckin, (name) => {
         currentStep = `Повтор: ${name}`;
         console.log(currentStep);
       });

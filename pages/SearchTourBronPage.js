@@ -421,7 +421,7 @@ class SearchTourBronPage {
     }
   }
 
-  async ensureEgyptFilters(checkin, onRetry) {
+  async ensureCharterFilters(checkin, onRetry) {
     let date = checkin;
     let refills = 0;
 

@@ -56,7 +56,7 @@ try {
 const text = [
   'Локаль .com',
   '```',
-  `Чартер - ${claimOf(results, 'Egypt')}`,
+  `Чартер - ${claimOf(results, 'Charter')}`,
   `GDS - ${claimOf(results, 'GDS')}`,
   `Отель - ${claimOf(results, 'Hotel')}`,
   `Конструктор - ${claimOf(results, 'Construct')}`,
@@ -72,6 +72,6 @@ const text = [
 ].join('\n');
 
 console.log('\n' + text + '\n');
-sendMattermost(text).then(() => {
+sendMattermost(text, 'BAND_WEBHOOK_SMOKE').then(() => {
   process.exit(0);
 });
