@@ -102,7 +102,29 @@ test.describe('CharterAsia', () => {
       currentStep = 'Проверять загрузку счета';
       await bron.downloadInvoice();
 
-      await notifyBron({ name: 'CharterAsia', ok: true, orderNumber, claimUrl });
+      currentStep = 'Закрыть вкладку pay_variant';
+      await bron.closePayVariantTab();
+
+      currentStep = 'Вставить номер заявки и нажать искать';
+      await bron.searchClaim(orderNumber);
+
+      currentStep = 'Перейти к окну с документами';
+      await bron.openClaimDocuments(orderNumber);
+
+      currentStep = 'Скачивание документов';
+      await bron.downloadAllPrints();
+
+      currentStep = 'Выбор всех файлов чек-боксами';
+      await bron.selectAllDocuments();
+
+      currentStep = 'скачивание одним файлом';
+      await bron.downloadAllInOneFile();
+
+      const priceNote = [
+        `Все доступные документы загружены: ${bron.printDownloaded}/${bron.printClicked}`,
+        bron.multiDownloadOk ? 'Мультизагрузка успешна' : '',
+      ].filter(Boolean).join('\n');
+      await notifyBron({ name: 'CharterAsia', ok: true, orderNumber, claimUrl, priceNote });
     } catch (err) {
       let pageUrl = 'недоступен';
       try {

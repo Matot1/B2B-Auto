@@ -315,7 +315,7 @@ class SearchTourBronPage {
   }
 
   async pickNightsFrom() {
-    console.log('Ставлю ночей от: 7, иначе 11');
+    console.log('Ставлю ночей от: 7, иначе следующий пункт больше 7');
     const result = await this.page.evaluate(() => {
       const userSel = '#search_tour > div.std.container > table.user_info > tbody > tr > td:nth-child(1) > table > tbody > tr.paramsFrom > td.nights > div';
       const wrap = document.querySelector(userSel) || document.querySelector('td.nights > div') || document.querySelector('td.nights');
@@ -328,7 +328,12 @@ class SearchTourBronPage {
       if (!select) return { ok: false, available: 'в td.nights нет select' };
       const was = (select.options[select.selectedIndex]?.textContent || '').trim();
       const texts = [...select.options].map((o) => (o.textContent || '').trim()).filter(Boolean);
-      const want = texts.includes('7') ? '7' : (texts.includes('11') ? '11' : null);
+      const numbers = texts
+        .map((text) => ({ text, n: Number(text) }))
+        .filter((item) => Number.isFinite(item.n))
+        .sort((a, b) => a.n - b.n);
+      const next = numbers.find((item) => item.n > 7);
+      const want = texts.includes('7') ? '7' : (next ? next.text : null);
       if (!want) return { ok: false, available: texts.join(' | ') || 'пусто', was };
       const opt = [...select.options].find((o) => (o.textContent || '').trim() === want);
       if (window.jQuery) {
@@ -342,20 +347,23 @@ class SearchTourBronPage {
       return { ok: true, picked: want, was };
     });
     if (!result.ok) {
-      throw new Error(`В «ночей от» нет 7 и нет 11. Сейчас «${result.was || '—'}». ${result.available}`);
+      throw new Error(`В «ночей от» нет 7 и нет пункта больше 7. Сейчас «${result.was || '—'}». ${result.available}`);
     }
+    this.nightsFrom = result.picked;
     console.log(`Ночей от было ${result.was}, стало ${result.picked}`);
     return result.picked;
   }
 
-  async nightsIs7or11() {
-    return this.page.evaluate(() => {
+  async nightsIsChosen() {
+    const want = this.nightsFrom;
+    if (!want) return false;
+    return this.page.evaluate((expected) => {
       const select = document.querySelector('select[name="NIGHTS_FROM"]')
         || document.querySelector('td.nights select');
       if (!select) return false;
       const text = (select.options[select.selectedIndex]?.textContent || '').trim();
-      return text === '7' || text === '11' || select.value === '7' || select.value === '11';
-    });
+      return text === expected || select.value === expected;
+    }, want);
   }
 
   async setCheckinGds() {
@@ -707,7 +715,7 @@ class SearchTourBronPage {
       if (!(await this.chosenHas(this.city, 'Минск'))) missing = 'city';
       else if (!(await this.chosenHas(this.country, 'Таиланд'))) missing = 'country';
       else if (!(await this.chosenHas(this.tour, tourName))) missing = 'tour';
-      else if (!(await this.nightsIs7or11())) missing = 'nights';
+      else if (!(await this.nightsIsChosen())) missing = 'nights';
       else if ((await this.byAdults.innerText()).replace(/\s+/g, ' ').trim() !== '1') missing = 'adults';
       else if (!(await this.instantCheckbox.isChecked())) missing = 'instant';
       else if (dateVal !== date) missing = 'date';
@@ -735,7 +743,7 @@ class SearchTourBronPage {
         onRetry(`Выбор тура ${tourName}`);
         await this.pickTourExact(tourName);
       } else if (missing === 'nights') {
-        onRetry('Выбор ночей от 7 или 11');
+        onRetry('Выбор ночей от');
         await this.pickNightsFrom();
       } else if (missing === 'adults') {
         onRetry('Выбор взрослых 1');
