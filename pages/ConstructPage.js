@@ -818,11 +818,31 @@ async function runConstruct(page, context) {
   currentStep = 'Проверить цену в поле "сумма для оплаты" и закрыть окно';
   await bron.confirmReceiptPriceAndClose();
 
+  currentStep = 'Закрыть вкладку pay_variant';
+  await bron.closePayVariantTab();
+
+  currentStep = 'Вставить номер заявки и нажать искать';
+  await bron.searchClaim(orderNumber);
+
+  currentStep = 'Перейти к окну с документами';
+  await bron.openClaimDocuments(orderNumber);
+
+  currentStep = 'Скачивание документов';
+  await bron.downloadAllPrints();
+
+  currentStep = 'Выбор всех файлов чек-боксами';
+  await bron.selectAllDocuments();
+
+  currentStep = 'скачивание одним файлом';
+  await bron.downloadAllInOneFile();
+
   const priceNote = [
     bron.alfaPriceOk && bron.tbankPriceOk && bron.tbankCardPriceOk && bron.receiptPriceOk
       ? 'Цена заявки в способах оплаты совпадает'
       : '',
     'Все варианты оплаты доступны',
+    `Все доступные документы загружены: ${bron.printDownloaded}/${bron.printClicked}`,
+    bron.multiDownloadOk ? 'Мультизагрузка успешна' : '',
   ].filter(Boolean).join('\n');
   await notifyBron({ name: 'Construct', ok: true, orderNumber, claimUrl, priceNote });
   } catch (err) {

@@ -31,6 +31,9 @@ class BronPage {
     this.tbankCardSubmit = page.locator('#acquiring_tbank_container > fieldset > form > table > tbody > tr:nth-child(5) > td > button.acquiring_submit.tbank');
     this.alfaAmount = '';
     this.alfaPriceOk = false;
+    this.printClicked = 0;
+    this.printDownloaded = 0;
+    this.multiDownloadOk = false;
   }
 
   static async resolve(context, page) {
@@ -489,6 +492,162 @@ class BronPage {
     await expect(this.modalClose).toBeVisible({ timeout: 30000 });
     await this.modalClose.click();
     await expect(this.payModal).toBeHidden({ timeout: 30000 });
+  }
+
+  async closePayVariantTab() {
+    const context = this.page.context();
+    const payPage = context.pages().find((p) => !p.isClosed() && p.url().includes('pay_variant'));
+    if (!payPage) {
+      throw new Error('Вкладка pay_variant не найдена');
+    }
+    await payPage.close();
+    const claimPage = context.pages().find((p) => !p.isClosed() && /cl_refer/.test(p.url()));
+    if (!claimPage) {
+      throw new Error('Вкладка cl_refer не найдена');
+    }
+    this.page = claimPage;
+    await this.page.bringToFront();
+    await this.page.waitForLoadState('load', { timeout: 60000 });
+    this.claimResultSet = this.page.locator('#cl_refer > div.resultset');
+    await expect(this.claimResultSet).toBeVisible({ timeout: 60000 });
+    console.log('Вкладка pay_variant закрыта. Просмотр заявок:', this.page.url());
+  }
+
+  async searchClaim(orderNumber) {
+    const number = String(orderNumber || '').trim();
+    if (!number || number === 'не найден') {
+      throw new Error('Номер заявки пустой');
+    }
+    this.claimNumberInput = this.page.locator('#cl_refer > div.controls > table > tbody > tr > td.right_side > table > tbody > tr:nth-child(1) > td:nth-child(2) > input');
+    await expect(this.claimNumberInput).toBeVisible({ timeout: 30000 });
+    await this.claimNumberInput.fill(number);
+    await expect(this.claimNumberInput).toHaveValue(number);
+
+    this.claimSearchButton = this.page.locator('#cl_refer > div.controls > table > tbody > tr > td.right_side > table > tbody > tr:nth-child(5) > td > button');
+    await expect(this.claimSearchButton).toBeVisible({ timeout: 30000 });
+    const searchResponse = this.page.waitForResponse(
+      (res) => /cl_refer/i.test(res.url()) && res.ok(),
+      { timeout: 90000 },
+    );
+    await this.claimSearchButton.click();
+    await searchResponse;
+    await this.page.waitForLoadState('load', { timeout: 90000 });
+    await this.page.waitForFunction(() => {
+      const el = document.querySelector('#samo-circle-preloader');
+      if (!el) return true;
+      const st = getComputedStyle(el);
+      if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return true;
+      const r = el.getBoundingClientRect();
+      return r.width === 0 || r.height === 0;
+    }, { timeout: 60000 });
+    this.claimNumberInput = this.page.locator('#cl_refer > div.controls > table > tbody > tr > td.right_side > table > tbody > tr:nth-child(1) > td:nth-child(2) > input');
+    await expect(this.claimNumberInput).toHaveValue(number);
+    this.claimResultSet = this.page.locator('#cl_refer > div.resultset');
+    await expect(this.claimResultSet).toBeVisible({ timeout: 60000 });
+    console.log('Найдена заявка:', number);
+  }
+
+  async openClaimDocuments(orderNumber) {
+    const number = String(orderNumber || '').trim();
+    if (!number || number === 'не найден') {
+      throw new Error('Номер заявки пустой');
+    }
+    this.documentsLink = this.page.locator(`#cl_${number} > tbody > tr.edit_claim > td.cl_alink > span.link.e_doc`);
+    await expect(this.documentsLink).toBeVisible({ timeout: 30000 });
+    await this.documentsLink.click();
+    this.payModal = this.page.locator('#modalContainer');
+    await expect(this.payModal).toBeVisible({ timeout: 60000 });
+    console.log('Открыты документы заявки:', number);
+  }
+
+  async downloadPrint(link) {
+    await expect(link).toBeVisible({ timeout: 30000 });
+    this.printClicked += 1;
+    const [download] = await Promise.all([
+      this.page.waitForEvent('download', { timeout: 60000 }),
+      link.click(),
+    ]);
+    const filename = download.suggestedFilename();
+    const filePath = await download.path();
+    if (!filePath) {
+      throw new Error('Документ не скачался');
+    }
+    const size = fs.statSync(filePath).size;
+    if (!size) {
+      throw new Error(`Документ «${filename}» пустой`);
+    }
+    await download.delete();
+    this.printDownloaded += 1;
+    console.log('Документ скачан и удалён:', filename, `${size} байт`);
+  }
+
+  printLinks() {
+    return this.page.locator('#e_doc > table > tbody > tr > td:nth-child(4) > a');
+  }
+
+  async openBookletTab(link) {
+    await expect(link).toBeVisible({ timeout: 30000 });
+    this.printClicked += 1;
+    const docsPage = this.page;
+    const popupPromise = docsPage.context().waitForEvent('page', { timeout: 60000 });
+    await link.click();
+    const popup = await popupPromise;
+    await popup.waitForLoadState('load', { timeout: 60000 });
+    this.printDownloaded += 1;
+    console.log('Памятка загружена:', popup.url());
+    const wentBack = await popup.goBack({ waitUntil: 'load', timeout: 60000 }).catch(() => null);
+    if (!wentBack && !popup.isClosed()) await popup.close();
+    this.page = docsPage;
+    await this.page.bringToFront();
+    await expect(this.page.locator('#e_doc')).toBeVisible({ timeout: 30000 });
+  }
+
+  async downloadAllPrints() {
+    const total = await this.printLinks().count();
+    if (!total) {
+      throw new Error('В #e_doc > table > tbody нет кнопок «Печать»');
+    }
+    console.log('Кнопок «Печать» в таблице:', total);
+    for (let i = 0; i < total; i++) {
+      const link = this.printLinks().nth(i);
+      const isBooklet = await link.evaluate((el) => (el.closest('tr')?.className || '').includes('doccategory-booklet'));
+      if (isBooklet) await this.openBookletTab(link);
+      else await this.downloadPrint(link);
+    }
+    if (this.printDownloaded !== total) {
+      throw new Error(`Скачано ${this.printDownloaded} из ${total}`);
+    }
+  }
+
+  async selectAllDocuments() {
+    this.docSelect = this.page.locator('#e_doc > table > thead > tr > th.ids > select');
+    await expect(this.docSelect).toBeVisible({ timeout: 30000 });
+    await this.docSelect.selectOption({ label: 'Все' });
+    await expect(this.docSelect.locator('option:checked')).toHaveText('Все');
+    this.multiDownload = this.page.locator('#multiDownload');
+    await expect(this.multiDownload).toBeEnabled({ timeout: 30000 });
+    console.log('Выбраны все документы');
+  }
+
+  async downloadAllInOneFile() {
+    this.multiDownload = this.page.locator('#multiDownload');
+    await expect(this.multiDownload).toBeEnabled({ timeout: 30000 });
+    const [download] = await Promise.all([
+      this.page.waitForEvent('download', { timeout: 60000 }),
+      this.multiDownload.click(),
+    ]);
+    const filename = download.suggestedFilename();
+    const filePath = await download.path();
+    if (!filePath) {
+      throw new Error('Общий файл не скачался');
+    }
+    const size = fs.statSync(filePath).size;
+    if (!size) {
+      throw new Error(`Общий файл «${filename}» пустой`);
+    }
+    await download.delete();
+    this.multiDownloadOk = true;
+    console.log('Общий файл скачан и удалён:', filename, `${size} байт`);
   }
 }
 
