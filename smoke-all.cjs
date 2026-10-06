@@ -56,7 +56,7 @@ try {
 const text = [
   'Локаль .com',
   '```',
-  `Чартер - ${claimOf(results, 'Charter')}`,
+  `Чартер - ${claimOf(results, 'Tailand')}`,
   `GDS - ${claimOf(results, 'GDS')}`,
   `Отель - ${claimOf(results, 'Hotel')}`,
   `Конструктор - ${claimOf(results, 'Construct')}`,
