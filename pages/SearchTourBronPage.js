@@ -421,7 +421,7 @@ class SearchTourBronPage {
     }
   }
 
-  async ensureCharterFilters(checkin, onRetry) {
+  async ensureCharterFilters(checkin, tourName, onRetry) {
     let date = checkin;
     let refills = 0;
 
@@ -433,6 +433,7 @@ class SearchTourBronPage {
       if (!(await this.chosenHas(this.city, 'Москва'))) missing = 'city';
       else if (!(await this.chosenHas(this.country, 'Таиланд'))) missing = 'country';
       else if (!(await this.chosenHas(this.freight, 'Чартер/блочная перевозка'))) missing = 'freight';
+      else if (!(await this.chosenHas(this.tour, tourName))) missing = 'tour';
       else if (dateVal !== date) missing = 'date';
       else if (!(await this.instantCheckbox.isChecked())) missing = 'instant';
       await this.logFilters(missing ? `перед поиском, пусто ${missing}` : 'перед поиском, все ок');
@@ -441,6 +442,7 @@ class SearchTourBronPage {
         await this.assertChosenFilled(this.city, 'Москва');
         await this.assertChosenFilled(this.country, 'Таиланд');
         await this.assertChosenFilled(this.freight, 'Чартер/блочная перевозка');
+        await this.assertChosenFilled(this.tour, tourName);
         await expect(this.checkin).toHaveValue(date);
         await expect(this.instantCheckbox).toBeChecked();
         return date;
@@ -460,6 +462,9 @@ class SearchTourBronPage {
       } else if (missing === 'freight') {
         onRetry('Выбор типа перевозки');
         await this.pickFilter(this.freight, 'Чартер/блочная перевозка');
+      } else if (missing === 'tour') {
+        onRetry(`Выбор тура ${tourName}`);
+        await this.pickTourExact(tourName);
       } else if (missing === 'instant') {
         onRetry('Активация чек-бокса мгновенное подтверждение');
         await this.checkInstantConfirm();

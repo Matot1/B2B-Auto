@@ -5,6 +5,8 @@ const { notifyBron } = require('./notify.cjs');
 const { SearchTourBronPage } = require('./pages/SearchTourBronPage.js');
 const { BronPage } = require('./pages/BronPage.js');
 
+const TOUR = 'Thailand Phuket MOW AZUR';
+
 test.describe('Charter', () => {
   test('бронирование Таиланд чартер', async ({ page, context }) => {
     test.setTimeout(15 * 60 * 1000);
@@ -32,6 +34,9 @@ test.describe('Charter', () => {
       currentStep = 'Выбор типа перевозки';
       await search.selectFreight('Чартер/блочная перевозка');
 
+      currentStep = 'Выбор тура Thailand Phuket MOW AZUR';
+      await search.pickTourExact(TOUR);
+
       currentStep = 'Прокрутка страницы';
       await search.scrollToDate();
 
@@ -49,7 +54,7 @@ test.describe('Charter', () => {
       await search.checkInstantConfirm();
 
       currentStep = 'Проверка всех фильтров перед поиском';
-      selectedCheckin = await search.ensureCharterFilters(selectedCheckin, (name) => {
+      selectedCheckin = await search.ensureCharterFilters(selectedCheckin, TOUR, (name) => {
         currentStep = `Повтор: ${name}`;
         console.log(currentStep);
       });
