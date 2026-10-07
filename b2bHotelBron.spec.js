@@ -6,7 +6,7 @@ const { HotelSearchPage } = require('./pages/HotelSearchPage.js');
 const { BronPage } = require('./pages/BronPage.js');
 
 test.describe('Hotel', () => {
-  test('бронирование отель Таиланд', async ({ page, context }) => {
+  test('бронирование отель Турция', async ({ page, context }) => {
     test.setTimeout(15 * 60 * 1000);
     const search = new HotelSearchPage(page);
     let currentStep = '';
@@ -23,8 +23,8 @@ test.describe('Hotel', () => {
       }
       await search.login(process.env.LOGIN, process.env.PASSWORD);
 
-      currentStep = 'Выбор страны Таиланд';
-      await search.selectCountry('Таиланд');
+      currentStep = 'Выбор страны Турция';
+      await search.selectCountry('Турция');
 
       currentStep = 'Выбор типа продукта Статика';
       await search.selectProduct('Статика');
@@ -53,14 +53,13 @@ test.describe('Hotel', () => {
         currentStep = `Повтор поиска: ${name}`;
         console.log(currentStep);
       });
-      await search.expectPrice();
+      await search.expectPrice(selectedCheckin);
 
       currentStep = 'Выбор отеля по цене';
-      const opened = await search.openBron(context);
+      const opened = await search.openBron(context, selectedCheckin);
       bron = new BronPage(opened);
       await search.core.afterStep(async () => {
-        await expect(bron.page.locator('table.tour_info.res')).toBeVisible({ timeout: 30000 });
-        await expect(bron.page.locator('table.tour_info.res')).toHaveAttribute('data-checkin', selectedCheckin);
+        await bron.expectTourCheckin(selectedCheckin);
       });
 
       currentStep = 'Заполнение данных туриста 1';
@@ -83,8 +82,11 @@ test.describe('Hotel', () => {
 
       currentStep = 'Бронирование';
       await bron.book();
+
+      currentStep = 'Ожидание номера заявки';
       const { orderNumber, claimUrl } = await bron.waitClaim();
       console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
+
       await notifyBron({ name: 'Hotel', ok: true, orderNumber, claimUrl });
     } catch (err) {
       let pageUrl = 'недоступен';

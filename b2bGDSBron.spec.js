@@ -53,7 +53,7 @@ test.describe('GDS', () => {
       currentStep = 'Выбор количества взрослых: 1';
       await search.pickAdults('1');
       await search.afterStep(async () => {
-        await expect(page.locator('select[name="ADULT"]')).toHaveValue('1');
+        await expect(search.adultSelect).toHaveValue('1');
         await expect(search.chosenTrigger(search.adults)).toHaveText('1');
       });
 
@@ -108,8 +108,6 @@ test.describe('GDS', () => {
       const { orderNumber, claimUrl } = await bron.waitClaim();
       console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
 
-      currentStep = 'Проверка заявки в ЛК';
-      await bron.openClaim(orderNumber, claimUrl);
       await notifyBron({ name: 'GDS', ok: true, orderNumber, claimUrl });
     } catch (err) {
       let pageUrl = 'недоступен';

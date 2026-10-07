@@ -9,6 +9,26 @@ function chosenContainer(page, selectName) {
     .first();
 }
 
+async function chosenDisplay(page, selectName) {
+  const trigger = chosenContainer(page, selectName).locator('a.chosen-single');
+  return (await trigger.innerText()).replace(/\s+/g, ' ').trim();
+}
+
+async function keepChosen(page, selectName, optionText) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await page.waitForTimeout(1000);
+    const display = await chosenDisplay(page, selectName);
+    if (display.includes(optionText)) {
+      console.log(`Тип документа остался: ${display}`);
+      return;
+    }
+    console.log(`Тип документа сбросился в «${display || 'пусто'}», повтор ${attempt}`);
+    await selectChosenByName(page, selectName, optionText);
+  }
+  const display = await chosenDisplay(page, selectName);
+  throw new Error(`${selectName}: в фильтре «${display || 'пусто'}», ожидали «${optionText}»`);
+}
+
 async function selectChosenByName(page, selectName, optionText) {
   const container = chosenContainer(page, selectName);
   const trigger = container.locator('a.chosen-single');
@@ -49,6 +69,21 @@ class BronCharterPage extends BronPage {
   static async resolve(context, page) {
     const base = await BronPage.resolve(context, page);
     return new BronCharterPage(base.page);
+  }
+
+  bookButtonInRow(row) {
+    return this.page.locator(`#bron_info > div.top_container > div.PRICEINFO > fieldset > table:nth-child(4) > tbody > tr:nth-child(${row}) > td > button.bron`);
+  }
+
+  async waitBookEnabled(row) {
+    const button = this.bookButtonInRow(row);
+    await button.waitFor({ state: 'visible', timeout: 60000 });
+    const selector = `#bron_info > div.top_container > div.PRICEINFO > fieldset > table:nth-child(4) > tbody > tr:nth-child(${row}) > td > button.bron`;
+    await this.page.waitForFunction((sel) => {
+      const btn = document.querySelector(sel);
+      return btn && !btn.disabled;
+    }, selector, { timeout: 60000 });
+    return button;
   }
 
   async clickAndWait(locator, hostPart, options = {}) {
@@ -96,10 +131,10 @@ class BronCharterPage extends BronPage {
     await fillInputValue(this.page.locator(`input[name="${prefix}[FIRSTNAME_NAME]"]`), firstNameRu);
     await fillInputValue(this.page.locator(`input[name="${prefix}[INN]"]`), '0700014746');
     await setDateDirect(this.page, `${prefix}[BORN]`, '01.01.2000');
-    await selectChosenByName(this.page, `${prefix}[NATIONALITY]`, 'Россия');
+    await selectChosenByName(this.page, `${prefix}[NATIONALITY]`, 'Беларусь');
+    await this.page.waitForTimeout(4000);
     await selectChosenByName(this.page, `${prefix}[IDENTITY_DOCUMENT]`, 'Заграничный паспорт');
-    await fillInputValue(this.page.locator(`input[name="${prefix}[PSERIE]"]`), faker.string.numeric(2));
-    await fillInputValue(this.page.locator(`input[name="${prefix}[PNUMBER]"]`), faker.string.numeric(7));
+    await keepChosen(this.page, `${prefix}[IDENTITY_DOCUMENT]`, 'Заграничный паспорт');
     await setDateDirect(this.page, `${prefix}[PVALID]`, '01.01.2031');
     await setDateDirect(this.page, `${prefix}[PGIVEN]`, '10.10.2024');
   }
@@ -111,8 +146,7 @@ class BronCharterPage extends BronPage {
     await fillInputValue(this.page.locator(`${root} > tr:nth-child(1) > td:nth-child(2) > input`), transliterate(lastNameRu).toUpperCase());
     await fillInputValue(this.page.locator(`${root} > tr:nth-child(2) > td:nth-child(2) > input`), transliterate(firstNameRu).toUpperCase());
     await fillInputValue(this.page.locator(`${root} > tr:nth-child(6) > td:nth-child(2) > input`), faker.location.city());
-    await fillInputValue(this.page.locator(`${root} > tr:nth-child(7) > td:nth-child(2) > input`), faker.string.numeric(4));
-    await fillInputValue(this.page.locator(`${root} > tr:nth-child(8) > td:nth-child(2) > input`), faker.string.numeric(6));
+    await fillInputValue(this.page.locator(`${root} > tr:nth-child(8) > td:nth-child(2) > input`), faker.string.numeric(7));
     await fillInputValue(
       this.page.locator(`${root} > tr:nth-child(10) > td:nth-child(2) > input`),
       `${faker.string.alphanumeric({ length: 10, casing: 'lower' })}@mail.ru`,
@@ -121,10 +155,21 @@ class BronCharterPage extends BronPage {
       this.page.locator(`${root} > tr:nth-child(11) > td:nth-child(2) > div > a`),
       'Беларусь',
     );
-    await this.selectChosenOpen(
-      this.page.locator(`${root} > tr:nth-child(12) > td:nth-child(2) > div > a`),
-      'Заграничный паспорт',
-    );
+    const buyerDoc = this.page.locator(`${root} > tr:nth-child(12) > td:nth-child(2) > div > a`);
+    await this.selectChosenOpen(buyerDoc, 'Заграничный паспорт');
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await this.page.waitForTimeout(1000);
+      const display = (await buyerDoc.innerText()).replace(/\s+/g, ' ').trim();
+      if (display.includes('Заграничный паспорт')) {
+        console.log(`Тип документа заказчика остался: ${display}`);
+        break;
+      }
+      if (attempt === 3) {
+        throw new Error(`Тип документа заказчика сбросился в «${display || 'пусто'}»`);
+      }
+      console.log(`Тип документа заказчика сбросился в «${display || 'пусто'}», повтор ${attempt}`);
+      await this.selectChosenOpen(buyerDoc, 'Заграничный паспорт');
+    }
   }
 
   async selectChosenOpen(openLocator, optionText) {
@@ -145,7 +190,12 @@ class BronCharterPage extends BronPage {
     await Promise.race([
       agreementBtn.waitFor({ state: 'visible', timeout: 20000 }),
       this.page.waitForFunction(
-        () => /Номер вашей заявки:\s*\d+/.test(document.body.innerText) || /CLAIM=\d+/i.test(location.href),
+        () => {
+          const textMatch = document.body.innerText.match(/Номер вашей заявки:\s*(\d+)/);
+          if (textMatch && textMatch[1] !== '0') return true;
+          const urlMatch = location.href.match(/CLAIM=(\d+)/i);
+          return !!(urlMatch && urlMatch[1] !== '0');
+        },
         null,
         { timeout: 20000 },
       ),
@@ -157,17 +207,25 @@ class BronCharterPage extends BronPage {
 
   async waitClaimFlexible() {
     await this.page.waitForFunction(
-      () => /Номер вашей заявки:\s*\d+/.test(document.body.innerText) || /CLAIM=\d+/i.test(location.href),
+      () => {
+        const textMatch = document.body.innerText.match(/Номер вашей заявки:\s*(\d+)/);
+        if (textMatch && textMatch[1] !== '0') return true;
+        const urlMatch = location.href.match(/CLAIM=(\d+)/i);
+        return !!(urlMatch && urlMatch[1] !== '0');
+      },
       null,
       { timeout: 90000 },
     );
-    let orderNumber = 'не найден';
+    let orderNumber = '';
     const pageText = await this.page.evaluate(() => document.body.innerText);
     const numMatch = pageText.match(/Номер вашей заявки:\s*(\d+)/);
-    if (numMatch) orderNumber = numMatch[1];
-    if (orderNumber === 'не найден') {
+    if (numMatch && numMatch[1] !== '0') orderNumber = numMatch[1];
+    if (!orderNumber) {
       const urlMatch = this.page.url().match(/CLAIM=(\d+)/i);
-      if (urlMatch) orderNumber = urlMatch[1];
+      if (urlMatch && urlMatch[1] !== '0') orderNumber = urlMatch[1];
+    }
+    if (!orderNumber) {
+      throw new Error('Заявка не забронирована: номер не найден');
     }
     const claimUrl = await this.page.evaluate(() => {
       const links = document.querySelectorAll('a');

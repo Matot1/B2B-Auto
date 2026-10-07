@@ -1,5 +1,5 @@
 const { expect } = require('@playwright/test');
-const { setAvailableDate, setDateDirect } = require('../object/zebraDatePicker.cjs');
+const { setAvailableDate, setDateDirect, forceCheckinPair } = require('../object/zebraDatePicker.cjs');
 
 function isCircleIdle() {
   const el = document.querySelector('#samo-circle-preloader');
@@ -30,6 +30,19 @@ function nextDay(dateStr) {
   return `${String(dt.getDate()).padStart(2, '0')}.${String(dt.getMonth() + 1).padStart(2, '0')}.${dt.getFullYear()}`;
 }
 
+function nextThuOrSun(dateStr) {
+  const [d, m, y] = dateStr.split('.').map(Number);
+  const dt = new Date(y, m - 1, d);
+  for (let i = 0; i < 7; i++) {
+    dt.setDate(dt.getDate() + 1);
+    const weekday = dt.getDay();
+    if (weekday === 0 || weekday === 4) {
+      return `${String(dt.getDate()).padStart(2, '0')}.${String(dt.getMonth() + 1).padStart(2, '0')}.${dt.getFullYear()}`;
+    }
+  }
+  throw new Error(`После ${dateStr} нет четверга или воскресенья`);
+}
+
 class SearchTourBronPage {
   constructor(page) {
     this.page = page;
@@ -42,11 +55,15 @@ class SearchTourBronPage {
     this.country = page.locator('.STATEINC_chosen');
     this.freight = page.locator('.FREIGHTTYPE_chosen');
     this.tour = page.locator('.TOURINC_chosen');
+    this.tourGroup = page.locator('#search_tour > div.std.container > table.direction.panel > tbody > tr:nth-child(1) > td:nth-child(2) > table > tbody > tr:nth-child(1) > td.tour_right');
     this.adults = page.locator('.ADULT_chosen');
+    this.byAdults = page.locator('#search_tour > div.std.container > table.user_info > tbody > tr > td:nth-child(3) > table > tbody > tr:nth-child(1) > td.tourists > div > a');
+    this.adultSelect = page.locator('select[name="ADULT"]');
     this.checkin = page.locator('input[name="CHECKIN_BEG"]');
     this.nightsFrom = page.locator('#search_tour > div.std.container > table.user_info > tbody > tr > td:nth-child(1) > table > tbody > tr.paramsFrom > td.nights > div');
     this.groupCheckbox = page.locator('label:has-text("группировать результаты")').locator('input[type="checkbox"]');
     this.promoCheckbox = page.locator('label:has-text("Не отображать PROMO")').locator('input[type="checkbox"]');
+    this.instantCheckbox = page.locator('#search_tour > div.std.container > table.hotels_container.panel > tbody > tr.filters-panel > td:nth-child(1) > div.checklistbox > label:nth-child(3) input[type="checkbox"]');
     this.price = page.locator('#scrollto td.td_price span').first();
     this.bronRow = page.locator('#scrollto > table > tbody > tr.price_info').filter({
       hasNot: page.locator('td.tour', { hasText: 'Dynamic package' }),
@@ -131,7 +148,8 @@ class SearchTourBronPage {
   }
 
   async chosenText(container) {
-    const raw = await this.chosenTrigger(container).innerText().catch(() => '');
+    if (await container.count() === 0) return '';
+    const raw = await this.chosenTrigger(container).innerText({ timeout: 1000 }).catch(() => '');
     return raw.replace(/\s+/g, ' ').trim();
   }
 
@@ -255,60 +273,106 @@ class SearchTourBronPage {
 
   async setCheckin() {
     const selected = await setAvailableDate(this.page, 'CHECKIN_BEG', 'yesplace');
-    await this.closeCalendar();
-    await expect(this.checkin).toHaveValue(selected);
+    const actual = await this.stickCheckin(selected);
     await this.logFilters('после даты');
-    return selected;
+    return actual;
+  }
+
+  async setCheckinBy() {
+    const selected = await setAvailableDate(this.page, 'CHECKIN_BEG', 'yesplace', [0, 4]);
+    const actual = await this.stickCheckin(selected);
+    const [d, m, y] = actual.split('.').map(Number);
+    const weekday = new Date(y, m - 1, d).getDay();
+    if (weekday !== 0 && weekday !== 4) {
+      throw new Error(`Дата ${actual} не четверг и не воскресенье`);
+    }
+    await this.logFilters('после даты');
+    return actual;
+  }
+
+  async stickCheckin(selected) {
+    const min = new Date();
+    min.setMonth(min.getMonth() + 4);
+    const minLabel = `${String(min.getDate()).padStart(2, '0')}.${String(min.getMonth() + 1).padStart(2, '0')}.${min.getFullYear()}`;
+    await this.page.evaluate(() => {
+      document.querySelectorAll('.Zebra_DatePicker.dp_visible').forEach((el) => {
+        el.classList.remove('dp_visible');
+        el.style.display = 'none';
+      });
+    });
+    await forceCheckinPair(this.page, selected);
+    let actual = await this.checkin.inputValue();
+    if (actual !== selected) {
+      const end = await this.page.locator('input[name="CHECKIN_END"]').inputValue().catch(() => '');
+      console.log(`Дата сбросилась на ${actual}, конец периода ${end}. Ставлю ${selected} без события сайта`);
+      await forceCheckinPair(this.page, selected);
+      actual = await this.checkin.inputValue();
+    }
+    if (actual !== selected) {
+      throw new Error(`Дата не установилась: ожидали ${selected} (строго после ${minLabel}), в поле ${actual}`);
+    }
+    return actual;
   }
 
   async pickNightsFrom() {
-    console.log('Ставлю ночей от: 7, иначе 11');
-    await this.page.keyboard.press('Escape').catch(() => {});
+    console.log('Ставлю ночей от: 7, иначе следующий пункт больше 7');
     const result = await this.page.evaluate(() => {
       const userSel = '#search_tour > div.std.container > table.user_info > tbody > tr > td:nth-child(1) > table > tbody > tr.paramsFrom > td.nights > div';
-      const wrap = document.querySelector(userSel) || document.querySelector('td.nights') || document.querySelector('select[name="NIGHTS_FROM"]');
-      if (!wrap) {
-        const names = [...document.querySelectorAll('select[name]')].map((s) => s.getAttribute('name')).join(', ');
-        return { ok: false, available: `поле ночей не найдено. select: ${names || 'нет'}` };
-      }
-      const select = wrap.tagName === 'SELECT' ? wrap : wrap.querySelector('select');
+      const wrap = document.querySelector(userSel) || document.querySelector('td.nights > div') || document.querySelector('td.nights');
+      if (!wrap) return { ok: false, available: 'поле ночей не найдено' };
+      const td = wrap.closest ? (wrap.closest('td.nights') || wrap.parentElement) : wrap;
+      const select = (wrap.tagName === 'SELECT' ? wrap : null)
+        || wrap.querySelector('select')
+        || (td && td.querySelector('select'))
+        || document.querySelector('select[name="NIGHTS_FROM"]');
       if (!select) return { ok: false, available: 'в td.nights нет select' };
+      const was = (select.options[select.selectedIndex]?.textContent || '').trim();
       const texts = [...select.options].map((o) => (o.textContent || '').trim()).filter(Boolean);
-      const want = texts.includes('7') ? '7' : (texts.includes('11') ? '11' : null);
-      if (!want) return { ok: false, available: texts.join(' | ') || 'пусто' };
+      const numbers = texts
+        .map((text) => ({ text, n: Number(text) }))
+        .filter((item) => Number.isFinite(item.n))
+        .sort((a, b) => a.n - b.n);
+      const next = numbers.find((item) => item.n > 7);
+      const want = texts.includes('7') ? '7' : (next ? next.text : null);
+      if (!want) return { ok: false, available: texts.join(' | ') || 'пусто', was };
       const opt = [...select.options].find((o) => (o.textContent || '').trim() === want);
       if (window.jQuery) {
         window.jQuery(select).val(opt.value).trigger('chosen:updated').trigger('change');
       } else {
         select.value = opt.value;
         select.dispatchEvent(new Event('change', { bubbles: true }));
-        const span = (wrap.closest ? wrap : select.parentElement)?.querySelector?.('a.chosen-single span');
-        if (span) span.textContent = want;
       }
-      return { ok: true, picked: want };
+      const span = (wrap.querySelector ? wrap : td).querySelector('a.chosen-single span');
+      if (span) span.textContent = want;
+      return { ok: true, picked: want, was };
     });
     if (!result.ok) {
-      throw new Error(`В «ночей от» нет 7 и нет 11. ${result.available}`);
+      throw new Error(`В «ночей от» нет 7 и нет пункта больше 7. Сейчас «${result.was || '—'}». ${result.available}`);
     }
-    console.log('Ночей от:', result.picked);
+    this.nightsFrom = result.picked;
+    console.log(`Ночей от было ${result.was}, стало ${result.picked}`);
     return result.picked;
   }
 
-  async nightsIs7or11() {
-    return this.page.evaluate(() => {
+  async nightsIsChosen() {
+    const want = this.nightsFrom;
+    if (!want) return false;
+    return this.page.evaluate((expected) => {
       const select = document.querySelector('select[name="NIGHTS_FROM"]')
         || document.querySelector('td.nights select');
       if (!select) return false;
       const text = (select.options[select.selectedIndex]?.textContent || '').trim();
-      return text === '7' || text === '11' || select.value === '7' || select.value === '11';
-    });
+      return text === expected || select.value === expected;
+    }, want);
   }
 
   async setCheckinGds() {
     const selected = await setAvailableDate(this.page, 'CHECKIN_BEG');
-    await this.closeCalendar();
-    await expect(this.checkin).toHaveValue(selected);
+    await this.stickCheckin(selected);
     await this.waitAfterFilterAjax(5000);
+    if ((await this.checkin.inputValue()) !== selected) {
+      await this.stickCheckin(selected);
+    }
     await this.logFilters('после даты');
     return selected;
   }
@@ -337,6 +401,15 @@ class SearchTourBronPage {
     await this.logFilters('после PROMO');
   }
 
+  async checkInstantConfirm() {
+    if (!(await this.instantCheckbox.isChecked())) {
+      await this.instantCheckbox.check();
+    }
+    await expect(this.instantCheckbox).toBeChecked();
+    await this.waitAfterFilterAjax();
+    await this.logFilters('после мгновенного подтверждения');
+  }
+
   async clickSearch() {
     await this.page.evaluate(() => {
       const btn = document.querySelector('button.load.right');
@@ -356,7 +429,7 @@ class SearchTourBronPage {
     }
   }
 
-  async ensureEgyptFilters(checkin, onRetry) {
+  async ensureCharterFilters(checkin, tourName, onRetry) {
     let date = checkin;
     let refills = 0;
 
@@ -366,18 +439,20 @@ class SearchTourBronPage {
       const dateVal = await this.checkin.inputValue();
       let missing = null;
       if (!(await this.chosenHas(this.city, 'Москва'))) missing = 'city';
-      else if (!(await this.chosenHas(this.country, 'Египет'))) missing = 'country';
+      else if (!(await this.chosenHas(this.country, 'Таиланд'))) missing = 'country';
       else if (!(await this.chosenHas(this.freight, 'Чартер/блочная перевозка'))) missing = 'freight';
-      else if (!(await this.chosenHas(this.tour, 'Sharm'))) missing = 'tour';
+      else if (!(await this.chosenHas(this.tour, tourName))) missing = 'tour';
       else if (dateVal !== date) missing = 'date';
+      else if (!(await this.instantCheckbox.isChecked())) missing = 'instant';
       await this.logFilters(missing ? `перед поиском, пусто ${missing}` : 'перед поиском, все ок');
 
       if (!missing) {
         await this.assertChosenFilled(this.city, 'Москва');
-        await this.assertChosenFilled(this.country, 'Египет');
+        await this.assertChosenFilled(this.country, 'Таиланд');
         await this.assertChosenFilled(this.freight, 'Чартер/блочная перевозка');
-        await this.assertChosenFilled(this.tour, 'Sharm');
+        await this.assertChosenFilled(this.tour, tourName);
         await expect(this.checkin).toHaveValue(date);
+        await expect(this.instantCheckbox).toBeChecked();
         return date;
       }
 
@@ -390,23 +465,25 @@ class SearchTourBronPage {
         onRetry('Выбор города Москва');
         await this.pickFilter(this.city, 'Москва');
       } else if (missing === 'country') {
-        onRetry('Выбор страны Египет');
-        await this.pickCountry(this.country, 'Египет');
+        onRetry('Выбор страны Таиланд');
+        await this.pickCountry(this.country, 'Таиланд');
       } else if (missing === 'freight') {
         onRetry('Выбор типа перевозки');
         await this.pickFilter(this.freight, 'Чартер/блочная перевозка');
       } else if (missing === 'tour') {
-        onRetry('Выбор тура Egypt Sharm-El-Sheikh MOW');
-        await this.tour.scrollIntoViewIfNeeded();
-        await this.pickFilter(this.tour, 'Sharm');
+        onRetry(`Выбор тура ${tourName}`);
+        await this.pickTourExact(tourName);
+      } else if (missing === 'instant') {
+        onRetry('Активация чек-бокса мгновенное подтверждение');
+        await this.checkInstantConfirm();
       } else {
         onRetry('Установка даты вылета');
-        date = await setAvailableDate(this.page, 'CHECKIN_BEG', 'yesplace');
+        date = await this.setCheckin();
       }
     }
   }
 
-  async searchUntilPrices(checkin, onRetry) {
+  async searchUntilPrices(checkin, onRetry, nextDate = nextDay) {
     let date = checkin;
     const maxTries = 7;
 
@@ -419,7 +496,7 @@ class SearchTourBronPage {
         throw new Error(`В #scrollto нет цен без «Dynamic package» за ${maxTries} поисков`);
       }
 
-      date = nextDay(date);
+      date = nextDate(date);
       onRetry(`нет цены в #scrollto, дата ${date}`);
       await this.shiftCheckin(date);
       await this.afterStep(async () => {
@@ -498,6 +575,24 @@ class SearchTourBronPage {
     await expect(this.chosenTrigger(this.tour)).toContainText(tourName, { timeout: 5000 });
   }
 
+  async selectAdultsBy() {
+    const trigger = this.byAdults;
+    await trigger.scrollIntoViewIfNeeded();
+    const current = (await trigger.innerText()).replace(/\s+/g, ' ').trim();
+    if (current !== '1') {
+      await trigger.click();
+      const option = trigger.locator('xpath=..').locator('li.active-result').filter({ hasText: /^\s*1\s*$/ }).first();
+      await option.click();
+      await this.page.keyboard.press('Escape');
+    }
+    await this.waitLoaders();
+    await expect(trigger).toHaveText(/^\s*1\s*$/);
+    const selectVal = await this.adultSelect.inputValue().catch(() => '');
+    if (selectVal && selectVal !== '1') {
+      throw new Error(`Взрослых в списке «1», в select «${selectVal}»`);
+    }
+  }
+
   async pickAdults(value) {
     await this.chosenTrigger(this.adults).click();
     await this.page.evaluate((want) => {
@@ -509,7 +604,7 @@ class SearchTourBronPage {
       }
       opt.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     }, value);
-    const adultValue = await this.page.locator('select[name="ADULT"]').inputValue();
+    const adultValue = await this.adultSelect.inputValue();
     if (adultValue !== value) {
       throw new Error(`После выбора взрослых ожидалось "${value}", получено "${adultValue}"`);
     }
@@ -517,7 +612,7 @@ class SearchTourBronPage {
   }
 
   async adultsIsOne() {
-    const selectVal = await this.page.locator('select[name="ADULT"]').inputValue().catch(() => '');
+    const selectVal = await this.adultSelect.inputValue().catch(() => '');
     const text = (await this.chosenTrigger(this.adults).innerText().catch(() => '')).trim();
     return selectVal === '1' && text === '1';
   }
@@ -542,7 +637,7 @@ class SearchTourBronPage {
         await this.assertChosenFilled(this.freight, 'GDS');
         await this.assertChosenFilled(this.tour, tourName);
         await expect(this.checkin).toHaveValue(date);
-        await expect(this.page.locator('select[name="ADULT"]')).toHaveValue('1');
+        await expect(this.adultSelect).toHaveValue('1');
         await expect(this.chosenTrigger(this.adults)).toHaveText('1');
         return date;
       }
@@ -610,7 +705,7 @@ class SearchTourBronPage {
     }
   }
 
-  async ensureByFilters(checkin, onRetry) {
+  async ensureByFilters(checkin, tourName, onRetry) {
     let date = checkin;
     let refills = 0;
     while (true) {
@@ -618,13 +713,19 @@ class SearchTourBronPage {
       const dateVal = await this.checkin.inputValue();
       let missing = null;
       if (!(await this.chosenHas(this.city, 'Минск'))) missing = 'city';
-      else if (!(await this.chosenHas(this.country, 'Египет'))) missing = 'country';
-      else if (!(await this.nightsIs7or11())) missing = 'nights';
+      else if (!(await this.chosenHas(this.country, 'Таиланд'))) missing = 'country';
+      else if (!(await this.chosenHas(this.tour, tourName))) missing = 'tour';
+      else if (!(await this.nightsIsChosen())) missing = 'nights';
+      else if ((await this.byAdults.innerText()).replace(/\s+/g, ' ').trim() !== '1') missing = 'adults';
+      else if (!(await this.instantCheckbox.isChecked())) missing = 'instant';
       else if (dateVal !== date) missing = 'date';
       await this.logFilters(missing ? `BY перед поиском, пусто ${missing}` : 'BY перед поиском, все ок');
       if (!missing) {
         await this.assertChosenFilled(this.city, 'Минск');
-        await this.assertChosenFilled(this.country, 'Египет');
+        await this.assertChosenFilled(this.country, 'Таиланд');
+        await this.assertChosenFilled(this.tour, tourName);
+        await expect(this.byAdults).toHaveText(/^\s*1\s*$/);
+        await expect(this.instantCheckbox).toBeChecked();
         await expect(this.checkin).toHaveValue(date);
         return date;
       }
@@ -636,14 +737,23 @@ class SearchTourBronPage {
         onRetry('Выбор города Минск');
         await this.pickFilter(this.city, 'Минск');
       } else if (missing === 'country') {
-        onRetry('Выбор страны Египет');
-        await this.pickCountry(this.country, 'Египет');
+        onRetry('Выбор страны Таиланд');
+        await this.pickCountry(this.country, 'Таиланд');
+      } else if (missing === 'tour') {
+        onRetry(`Выбор тура ${tourName}`);
+        await this.pickTourExact(tourName);
       } else if (missing === 'nights') {
-        onRetry('Выбор ночей от 7 или 11');
+        onRetry('Выбор ночей от');
         await this.pickNightsFrom();
+      } else if (missing === 'adults') {
+        onRetry('Выбор взрослых 1');
+        await this.selectAdultsBy();
+      } else if (missing === 'instant') {
+        onRetry('Активация чек-бокса мгновенное подтверждение');
+        await this.checkInstantConfirm();
       } else {
         onRetry('Установка даты вылета');
-        date = await this.setCheckin();
+        date = await this.setCheckinBy();
       }
     }
   }
@@ -689,4 +799,4 @@ class SearchTourBronPage {
   }
 }
 
-module.exports = { SearchTourBronPage };
+module.exports = { SearchTourBronPage, nextThuOrSun };

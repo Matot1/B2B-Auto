@@ -11,7 +11,6 @@ test.describe('CharterAsia', () => {
   test('бронирование Египет чартер Астана', async ({ page, context }) => {
     test.setTimeout(15 * 60 * 1000);
     const search = new SearchTourBronPage(page);
-    search.tourGroup = page.locator('#search_tour > div.std.container > table.direction.panel > tbody > tr:nth-child(1) > td:nth-child(2) > table > tbody > tr:nth-child(1) > td.tour_right');
     let currentStep = '';
     let bron = null;
 
@@ -78,15 +77,10 @@ test.describe('CharterAsia', () => {
       await bron.fillTouristAsia(2);
 
       currentStep = 'Пересчёт стоимости';
-      const bookBtn = bron.page.locator('#bron_info > div.top_container > div.PRICEINFO > fieldset > table:nth-child(4) > tbody > tr:nth-child(6) > td > button.bron');
-      await bron.clickAndWait(bron.page.locator('button.calc:has-text("Пересчитать")'), 'fstravel.asia');
+      await bron.clickAndWait(bron.calcButton, 'fstravel.asia');
 
       currentStep = 'Бронирование';
-      await bookBtn.waitFor({ state: 'visible', timeout: 60000 });
-      await bron.page.waitForFunction(() => {
-        const btn = document.querySelector('#bron_info > div.top_container > div.PRICEINFO > fieldset > table:nth-child(4) > tbody > tr:nth-child(6) > td > button.bron');
-        return btn && !btn.disabled;
-      }, { timeout: 60000 });
+      const bookBtn = await bron.waitBookEnabled(6);
       await bron.clickAndWait(bookBtn, 'fstravel.asia');
 
       currentStep = 'Подтверждение условий';
@@ -96,8 +90,6 @@ test.describe('CharterAsia', () => {
       const { orderNumber, claimUrl } = await bron.waitClaim();
       console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
 
-      currentStep = 'Проверка заявки в ЛК';
-      await bron.openClaim(orderNumber, claimUrl);
       await notifyBron({ name: 'CharterAsia', ok: true, orderNumber, claimUrl });
     } catch (err) {
       let pageUrl = 'недоступен';

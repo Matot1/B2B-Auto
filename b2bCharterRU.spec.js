@@ -5,8 +5,10 @@ const { notifyBron } = require('./notify.cjs');
 const { SearchTourBronPage } = require('./pages/SearchTourBronPage.js');
 const { BronPage } = require('./pages/BronPage.js');
 
-test.describe('Egypt', () => {
-  test('бронирование Египет чартер Sharm', async ({ page, context }) => {
+const TOUR = 'Thailand Phuket MOW AZUR';
+
+test.describe('Charter', () => {
+  test('бронирование Таиланд чартер', async ({ page, context }) => {
     test.setTimeout(15 * 60 * 1000);
 
     const search = new SearchTourBronPage(page);
@@ -26,14 +28,14 @@ test.describe('Egypt', () => {
       currentStep = 'Выбор города Москва';
       await search.selectCity('Москва');
 
-      currentStep = 'Выбор страны Египет';
-      await search.selectCountry('Египет');
+      currentStep = 'Выбор страны Таиланд';
+      await search.selectCountry('Таиланд');
 
       currentStep = 'Выбор типа перевозки';
       await search.selectFreight('Чартер/блочная перевозка');
 
-      currentStep = 'Выбор тура Egypt Sharm-El-Sheikh MOW';
-      await search.selectTour('Sharm');
+      currentStep = 'Выбор тура Thailand Phuket MOW AZUR';
+      await search.pickTourExact(TOUR);
 
       currentStep = 'Прокрутка страницы';
       await search.scrollToDate();
@@ -48,8 +50,11 @@ test.describe('Egypt', () => {
       currentStep = 'Активация чек-бокса Не отображать PROMO';
       await search.checkHidePromo();
 
+      currentStep = 'Активация чек-бокса мгновенное подтверждение';
+      await search.checkInstantConfirm();
+
       currentStep = 'Проверка всех фильтров перед поиском';
-      selectedCheckin = await search.ensureEgyptFilters(selectedCheckin, (name) => {
+      selectedCheckin = await search.ensureCharterFilters(selectedCheckin, TOUR, (name) => {
         currentStep = `Повтор: ${name}`;
         console.log(currentStep);
       });
@@ -92,7 +97,8 @@ test.describe('Egypt', () => {
       currentStep = 'Ожидание номера заявки';
       const { orderNumber, claimUrl } = await bron.waitClaim();
       console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
-      await notifyBron({ name: 'Egypt', ok: true, orderNumber, claimUrl });
+
+      await notifyBron({ name: 'Tailand', ok: true, orderNumber, claimUrl });
     } catch (err) {
       let pageUrl = 'недоступен';
       try {
@@ -100,7 +106,7 @@ test.describe('Egypt', () => {
         if (activePage && !activePage.isClosed()) pageUrl = activePage.url();
       } catch (_) {}
       console.error(`❌ Ошибка на шаге "${currentStep}": ${err.message}\nURL: ${pageUrl}`);
-      await notifyBron({ name: 'Egypt', ok: false, step: currentStep, error: err.message, url: pageUrl });
+      await notifyBron({ name: 'Tailand', ok: false, step: currentStep, error: err.message, url: pageUrl });
       throw err;
     }
   });

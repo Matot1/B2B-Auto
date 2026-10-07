@@ -20,7 +20,6 @@ class HotelSearchPage {
     this.checkin = page.locator('input[name="CHECKIN_BEG"]');
     this.groupCheckbox = page.locator('label.hotelgroup:has-text("группировать результаты") input[name="PARTITION_PRICE"]');
     this.table = page.locator('#scrollto');
-    this.price = page.locator('span.price.bron.price_button').first();
     this.searchBtn = page.locator('button.load:has-text("Искать")').first();
   }
 
@@ -146,14 +145,14 @@ class HotelSearchPage {
       await this.core.waitLoaders();
       const dateVal = await this.checkin.inputValue();
       let missing = null;
-      if (!(await this.core.chosenHas(this.country, 'Таиланд'))) missing = 'country';
+      if (!(await this.core.chosenHas(this.country, 'Турция'))) missing = 'country';
       else if (!(await this.core.chosenHas(this.productType, 'Статика'))) missing = 'product';
       else if (!(await this.core.chosenHas(this.program, 'Стандарт'))) missing = 'program';
       else if (dateVal !== date) missing = 'date';
       else if (!(await this.core.chosenHas(this.adults, '2'))) missing = 'adults';
       await this.logHotelFilters(missing ? `перед поиском, пусто ${missing}` : 'перед поиском, все ок');
       if (!missing) {
-        await this.core.assertChosenFilled(this.country, 'Таиланд');
+        await this.core.assertChosenFilled(this.country, 'Турция');
         await this.core.assertChosenFilled(this.productType, 'Статика');
         await this.core.assertChosenFilled(this.program, 'Стандарт');
         await expect(this.checkin).toHaveValue(date);
@@ -165,8 +164,8 @@ class HotelSearchPage {
       }
       refills += 1;
       if (missing === 'country') {
-        onRetry('Выбор страны Таиланд');
-        await this.core.pickCountry(this.country, 'Таиланд');
+        onRetry('Выбор страны Турция');
+        await this.core.pickCountry(this.country, 'Турция');
       } else if (missing === 'product') {
         onRetry('Выбор типа продукта Статика');
         await this.core.pickFilter(this.productType, 'Статика');
@@ -225,18 +224,25 @@ class HotelSearchPage {
     return date;
   }
 
-  async expectPrice() {
+  priceOnDate(date) {
+    return this.table.locator('tr').filter({
+      has: this.page.locator('td', { hasText: date }),
+    }).locator('span.price.bron.price_button').first();
+  }
+
+  async expectPrice(date) {
     await this.core.afterStep(async () => {
       await expect(this.table).toBeVisible();
-      await expect(this.price).toBeVisible({ timeout: 60000 });
+      await expect(this.priceOnDate(date)).toBeVisible({ timeout: 60000 });
     });
   }
 
-  async openBron(context) {
-    await this.price.scrollIntoViewIfNeeded();
+  async openBron(context, date) {
+    const price = this.priceOnDate(date);
+    await price.scrollIntoViewIfNeeded();
     const [bookingPage] = await Promise.all([
       context.waitForEvent('page', { timeout: 15000 }).catch(() => null),
-      this.price.click({ timeout: 10000 }),
+      price.click({ timeout: 10000 }),
     ]);
     return bookingPage || this.page;
   }

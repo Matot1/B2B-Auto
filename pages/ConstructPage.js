@@ -216,7 +216,7 @@ async function ensureOutboundFreightFilters(page) {
   }
 
   if (isChosenEmpty(townTo)) {
-    await selectChosen(page, '#ORDER_TOWNTO_chosen', 'Хургада');
+    await selectChosen(page, '#ORDER_TOWNTO_chosen', 'Анталья');
   }
   if (isChosenEmpty(classInc)) {
     await selectChosen(page, '#ORDER_CLASSINC_chosen', 'ECONOM');
@@ -224,9 +224,61 @@ async function ensureOutboundFreightFilters(page) {
   if (isChosenEmpty(placeInc)) {
     await selectChosen(page, '#ORDER_FRPLACEINC_chosen', 'Стандартное');
   }
-  if (isChosenEmpty(freightInc) || !hasSeatsRe.test(freightInc)) {
+  const freightNow = await getChosenDisplay(page, '#ORDER_FREIGHTINC_chosen');
+  if (/нет\s+мест/i.test(freightNow)) {
+    return;
+  }
+  if (isChosenEmpty(freightNow) || !hasSeatsRe.test(freightNow)) {
     await pickFreightWithSeats(page, '#ORDER_FREIGHTINC_chosen', 'Транспорт');
   }
+}
+
+async function nextDepartureCity(page, skip) {
+  const selector = '#ORDER_TOWNFROM_chosen';
+  const { texts } = await listChosenOptions(page, selector);
+  await page.keyboard.press('Escape');
+  await waitAfterAction(page, 300);
+  const norm = (value) => (value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const skipped = new Set(skip.map(norm));
+  return texts.find((text) => text && !isChosenEmpty(text) && !skipped.has(norm(text))) || '';
+}
+
+async function ensureTransportHasSeats(page) {
+  const citySelector = '#ORDER_TOWNFROM_chosen';
+  const freightSelector = '#ORDER_FREIGHTINC_chosen';
+  const hasSeatsRe = /есть\s+места/i;
+  const noSeatsRe = /нет\s+мест/i;
+  const tried = [];
+
+  for (let attempt = 1; attempt <= 20; attempt++) {
+    try {
+      await ensureOutboundFreightFilters(page);
+    } catch (err) {
+      if (!/нет строк с «есть места»/.test(err.message)) throw err;
+    }
+
+    const freight = await getChosenDisplay(page, freightSelector);
+    if (hasSeatsRe.test(freight)) {
+      console.log(`Транспорт: ${freight}`);
+      return;
+    }
+    if (!noSeatsRe.test(freight)) {
+      throw new Error(`Транспорт: «${freight || 'пусто'}». Нет «(есть места)» и нет «(нет мест)»`);
+    }
+
+    const city = await getChosenDisplay(page, citySelector);
+    tried.push(city);
+    const next = await nextDepartureCity(page, tried);
+    if (!next) {
+      throw new Error(`Транспорт «${freight}»: в списке городов вылета больше нет другого города`);
+    }
+    console.log(`Транспорт «${freight}» — город вылета ${next}`);
+    await selectChosen(page, citySelector, next);
+    await waitLoadersIfAny(page);
+    await expect.poll(async () => getChosenDisplay(page, freightSelector), { timeout: 20000 }).not.toBe(freight).catch(() => {});
+  }
+
+  throw new Error('Транспорт: нет «(есть места)» ни в одном городе вылета');
 }
 
 async function ensureBackFreightWithSeats(page) {
@@ -325,8 +377,9 @@ async function checkFreightOrderFields(page) {
   return { empty, freightBackNoSeats };
 }
 
-async function runConstruct(page) {
+async function runConstruct(page, context) {
   let currentStep = '';
+  let bron = null;
 
   try {
   currentStep = 'Переход на сайт';
@@ -367,27 +420,27 @@ async function runConstruct(page) {
   await page.locator('#STATE_chosen').waitFor({ state: 'visible', timeout: 30000 });
   await page.locator('#STATE_chosen a.chosen-single').waitFor({ state: 'visible', timeout: 30000 });
 
-  currentStep = 'Выбор страны пребывания Египет';
+  currentStep = 'Выбор страны пребывания Турция';
   const countryResponse = page.waitForResponse(
     (response) => response.url().includes('fstravel.com') && response.status() < 400,
     { timeout: 30000 },
   ).catch(() => null);
-  await selectChosen(page, '#STATE_chosen', 'Египет');
+  await selectChosen(page, '#STATE_chosen', 'Турция');
   await countryResponse;
   if (await waitCircleAppear(page, 3000)) {
     await waitLoadersIfAny(page);
   }
   await afterStep(page, async () => {
-    await expect(page.locator('#STATE_chosen a.chosen-single')).toContainText('Египет');
+    await expect(page.locator('#STATE_chosen a.chosen-single')).toContainText('Турция');
   });
   await page.waitForFunction(() => {
     const select = document.querySelector('select[name="TOURINC"]');
     return select && select.options && select.options.length > 1;
   }, { timeout: 30000 });
 
-  currentStep = 'Выбор тура SL TOUR Hurghada MOW';
+  currentStep = 'Выбор тура SL TOUR Antalya MOW';
   await waitAfterAction(page, 1500);
-  await selectChosen(page, '#TOURINC_chosen', 'SL TOUR Hurghada MOW');
+  await selectChosen(page, '#TOURINC_chosen', 'SL TOUR Antalya MOW');
   await waitAfterAction(page, 2000);
 
   currentStep = 'Выбор начала тура';
@@ -600,8 +653,8 @@ async function runConstruct(page) {
     await expect(page.locator('#ORDER_TOWNFROM_chosen a.chosen-single')).toContainText('Москва');
   });
 
-  currentStep = 'Проверка фильтров транспорта туда';
-  await ensureOutboundFreightFilters(page);
+  currentStep = 'Проверка выбранного транспорта';
+  await ensureTransportHasSeats(page);
 
   currentStep = 'Выбор класса мест ECONOM';
   const backFreightCb = page.locator('#ORDER_BACK_FREIGHT_ENABLE');
@@ -716,11 +769,13 @@ async function runConstruct(page) {
     throw new Error('Заявка не забронирована: номер не найден');
   }
   console.log('Номер заявки:', orderNumber, 'Ссылка:', claimUrl);
+
   await notifyBron({ name: 'Construct', ok: true, orderNumber, claimUrl });
   } catch (err) {
     let pageUrl = 'недоступен';
     try {
-      if (page && !page.isClosed()) pageUrl = page.url();
+      const active = bron && bron.page && !bron.page.isClosed() ? bron.page : page;
+      if (active && !active.isClosed()) pageUrl = active.url();
     } catch (_) {}
     console.error(`❌ Ошибка на шаге "${currentStep}": ${err.message}\nURL: ${pageUrl}`);
     await notifyBron({ name: 'Construct', ok: false, step: currentStep, error: err.message, url: pageUrl });
