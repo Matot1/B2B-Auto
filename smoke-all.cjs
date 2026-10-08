@@ -72,6 +72,6 @@ const text = [
 ].join('\n');
 
 console.log('\n' + text + '\n');
-sendMattermost(text, 'BAND_WEBHOOK_SMOKE').then(() => {
+sendMattermost(text, 'B2B_AUTOTEST_WEBHOOK').then(() => {
   process.exit(0);
 });

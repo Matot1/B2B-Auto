@@ -190,7 +190,12 @@ class BronCharterPage extends BronPage {
     await Promise.race([
       agreementBtn.waitFor({ state: 'visible', timeout: 20000 }),
       this.page.waitForFunction(
-        () => /Номер вашей заявки:\s*\d+/.test(document.body.innerText) || /CLAIM=\d+/i.test(location.href),
+        () => {
+          const textMatch = document.body.innerText.match(/Номер вашей заявки:\s*(\d+)/);
+          if (textMatch && textMatch[1] !== '0') return true;
+          const urlMatch = location.href.match(/CLAIM=(\d+)/i);
+          return !!(urlMatch && urlMatch[1] !== '0');
+        },
         null,
         { timeout: 20000 },
       ),
@@ -202,17 +207,25 @@ class BronCharterPage extends BronPage {
 
   async waitClaimFlexible() {
     await this.page.waitForFunction(
-      () => /Номер вашей заявки:\s*\d+/.test(document.body.innerText) || /CLAIM=\d+/i.test(location.href),
+      () => {
+        const textMatch = document.body.innerText.match(/Номер вашей заявки:\s*(\d+)/);
+        if (textMatch && textMatch[1] !== '0') return true;
+        const urlMatch = location.href.match(/CLAIM=(\d+)/i);
+        return !!(urlMatch && urlMatch[1] !== '0');
+      },
       null,
       { timeout: 90000 },
     );
-    let orderNumber = 'не найден';
+    let orderNumber = '';
     const pageText = await this.page.evaluate(() => document.body.innerText);
     const numMatch = pageText.match(/Номер вашей заявки:\s*(\d+)/);
-    if (numMatch) orderNumber = numMatch[1];
-    if (orderNumber === 'не найден') {
+    if (numMatch && numMatch[1] !== '0') orderNumber = numMatch[1];
+    if (!orderNumber) {
       const urlMatch = this.page.url().match(/CLAIM=(\d+)/i);
-      if (urlMatch) orderNumber = urlMatch[1];
+      if (urlMatch && urlMatch[1] !== '0') orderNumber = urlMatch[1];
+    }
+    if (!orderNumber) {
+      throw new Error('Заявка не забронирована: номер не найден');
     }
     const claimUrl = await this.page.evaluate(() => {
       const links = document.querySelectorAll('a');

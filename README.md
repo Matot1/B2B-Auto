@@ -36,15 +36,14 @@ npx playwright test --config=playwright.bron.config.js b2bCharterRU.spec.js
 
 ## `notify.cjs`
 
-Отдельный тест шлёт отчёт в `BAND_WEBHOOK` (или `MATTERMOST_WEBHOOK`). Сводка `npm run test:smoke` шлёт один отчёт в `BAND_WEBHOOK_SMOKE`.
+Отдельный тест и сводка `npm run test:smoke` шлют отчёт в `B2B_AUTOTEST_WEBHOOK`.
 
 ## `.env`
 
 ```
 LOGIN=ваш_логин
 PASSWORD=ваш_пароль
-BAND_WEBHOOK=https://your-band-or-mattermost/hooks/xxx
-BAND_WEBHOOK_SMOKE=https://your-band-or-mattermost/hooks/yyy
+B2B_AUTOTEST_WEBHOOK=https://your-band-or-mattermost/hooks/xxx
 BASE_URL=https://b2b.fstravel.com
 BASE_URL_BY=https://b2b.fstravel.by
 BASE_URL_ASIA=https://b2b.fstravel.asia

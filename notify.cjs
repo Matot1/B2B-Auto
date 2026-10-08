@@ -35,9 +35,8 @@ function postOnce(webhookUrl, data) {
   });
 }
 
-async function sendMattermost(message, envName = 'BAND_WEBHOOK') {
-  const webhookUrl = process.env[envName]
-    || (envName === 'BAND_WEBHOOK' ? process.env.MATTERMOST_WEBHOOK : '');
+async function sendMattermost(message, envName = 'B2B_AUTOTEST_WEBHOOK') {
+  const webhookUrl = process.env[envName] || '';
 
   if (!webhookUrl) {
     console.error(`${envName} не задан в .env`);

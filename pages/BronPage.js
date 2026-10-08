@@ -310,22 +310,23 @@ class BronPage {
   async openSbpAndBack(context) {
     this.sbpLink = this.page.locator('#sbp_container > div > a');
     await expect(this.sbpLink).toBeVisible({ timeout: 30000 });
-    const popupPromise = context.waitForEvent('page', { timeout: 60000 }).catch(() => null);
-    const sameTabPromise = this.page.waitForURL(/https:\/\/b2b\.cbrpay\.ru\//, { timeout: 60000 }).catch(() => null);
+    const popupPromise = context.waitForEvent('page', { timeout: 15000 }).catch(() => null);
     await this.sbpLink.click();
-    const popup = await Promise.race([
-      popupPromise.then((page) => page || null),
-      sameTabPromise.then(() => null),
-    ]);
+    const popup = await popupPromise;
     const target = popup && !popup.isClosed() ? popup : this.page;
     if (!/https:\/\/b2b\.cbrpay\.ru\//.test(target.url())) {
-      await target.waitForURL(/https:\/\/b2b\.cbrpay\.ru\//, { timeout: 60000 });
+      try {
+        await target.waitForURL(/https:\/\/b2b\.cbrpay\.ru\//, { timeout: 60000 });
+      } catch (err) {
+        const now = target.isClosed() ? 'вкладка закрыта' : target.url();
+        throw new Error(`Оплата СБП не открылась. Сейчас: ${now}. ${err.message}`);
+      }
     }
     console.log('Открыта оплата:', target.url());
     if (popup && !popup.isClosed()) {
       await popup.close();
     } else {
-      await this.page.goBack({ waitUntil: 'load', timeout: 60000 });
+      await this.page.goBack({ waitUntil: 'domcontentloaded', timeout: 60000 });
     }
     this.payVariant = this.page.locator('#pay_variant');
     await expect(this.payVariant).toBeVisible({ timeout: 60000 });
@@ -409,16 +410,17 @@ class BronPage {
   async openTbankBankAndBack(context) {
     this.tbankCardSubmit = this.page.locator('#acquiring_tbank_container > fieldset > form > table > tbody > tr:nth-child(5) > td > button.acquiring_submit.tbank');
     await expect(this.tbankCardSubmit).toBeVisible({ timeout: 30000 });
-    const popupPromise = context.waitForEvent('page', { timeout: 60000 }).catch(() => null);
-    const sameTabPromise = this.page.waitForURL(/https:\/\/pay\.tbank-online\.com\//, { timeout: 60000 }).catch(() => null);
+    const popupPromise = context.waitForEvent('page', { timeout: 15000 }).catch(() => null);
     await this.tbankCardSubmit.click();
-    const popup = await Promise.race([
-      popupPromise.then((opened) => opened || null),
-      sameTabPromise.then(() => null),
-    ]);
+    const popup = await popupPromise;
     const target = popup && !popup.isClosed() ? popup : this.page;
     if (!/https:\/\/pay\.tbank-online\.com\//.test(target.url())) {
-      await target.waitForURL(/https:\/\/pay\.tbank-online\.com\//, { timeout: 60000 });
+      try {
+        await target.waitForURL(/https:\/\/pay\.tbank-online\.com\//, { timeout: 60000 });
+      } catch (err) {
+        const now = target.isClosed() ? 'вкладка закрыта' : target.url();
+        throw new Error(`Оплата Т-Банк не открылась. Сейчас: ${now}. ${err.message}`);
+      }
     }
     await target.waitForLoadState('load', { timeout: 60000 });
     console.log('Открыта оплата Т-Банк:', target.url());
@@ -563,10 +565,122 @@ class BronPage {
   async downloadPrint(link) {
     await expect(link).toBeVisible({ timeout: 30000 });
     this.printClicked += 1;
-    const [download] = await Promise.all([
-      this.page.waitForEvent('download', { timeout: 60000 }),
-      link.click(),
+    const docsPage = this.page;
+    const context = docsPage.context();
+    const hrefAttr = (await link.getAttribute('href')) || '';
+    const href = hrefAttr ? new URL(hrefAttr, docsPage.url()).href : '';
+    const before = docsPage.url();
+    let finish;
+    const done = new Promise((resolve) => {
+      finish = resolve;
+    });
+    const timer = setTimeout(() => finish(null), 5000);
+    const take = (value) => {
+      clearTimeout(timer);
+      finish(value);
+    };
+    docsPage.waitForEvent('download', { timeout: 8000 }).then((download) => take({ kind: 'download', download })).catch(() => {});
+    context.waitForEvent('page', { timeout: 8000 }).then((popup) => take({ kind: 'popup', popup })).catch(() => {});
+    docsPage.waitForEvent('popup', { timeout: 8000 }).then((popup) => take({ kind: 'popup', popup })).catch(() => {});
+    docsPage.waitForURL((url) => url.href !== before, { timeout: 8000 }).then(() => take({ kind: 'url', href: docsPage.url() })).catch(() => {});
+    await link.click();
+    const outcome = await done;
+    if (!outcome) {
+      if (!href) {
+        throw new Error(`Печать не открылась. Ссылка: нет. Страница: ${docsPage.url()}`);
+      }
+      await this.openPrintHref(docsPage, href);
+      return;
+    }
+    if (outcome.kind === 'url') {
+      this.printDownloaded += 1;
+      console.log('Печать открыта:', outcome.href);
+      if (docsPage.url() !== before) {
+        await docsPage.goBack({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+      }
+      this.page = docsPage;
+      await this.page.bringToFront();
+      await expect(this.page.locator('#e_doc')).toBeVisible({ timeout: 30000 });
+      return;
+    }
+    if (outcome.kind === 'download') {
+      await this.keepDownload(outcome.download);
+      return;
+    }
+    const popup = outcome.popup;
+    let finishPopup;
+    const popupDone = new Promise((resolve) => {
+      finishPopup = resolve;
+    });
+    const popupTimer = setTimeout(() => finishPopup(null), 60000);
+    const takePopup = (value) => {
+      clearTimeout(popupTimer);
+      finishPopup(value);
+    };
+    popup.waitForEvent('download', { timeout: 65000 }).then((download) => takePopup({ kind: 'download', download })).catch(() => {});
+    popup.waitForURL((url) => {
+      const href = url.href;
+      return Boolean(href) && href !== 'about:blank';
+    }, { timeout: 65000 }).then(() => takePopup({ kind: 'url', href: popup.url() })).catch(() => {});
+    const opened = await popupDone;
+    if (!opened) {
+      throw new Error('Печать во вкладке не загрузилась');
+    }
+    if (opened.kind === 'download') {
+      await this.keepDownload(opened.download);
+    } else {
+      this.printDownloaded += 1;
+      console.log('Печать открыта во вкладке:', opened.href);
+    }
+    if (!popup.isClosed()) await popup.close().catch(() => {});
+    this.page = docsPage;
+    await this.page.bringToFront();
+    await expect(this.page.locator('#e_doc')).toBeVisible({ timeout: 30000 });
+  }
+
+  async openPrintHref(docsPage, href) {
+    const tab = await docsPage.context().newPage();
+    const downloadPromise = tab.waitForEvent('download', { timeout: 60000 }).catch(() => null);
+    let response = null;
+    try {
+      response = await tab.goto(href, { waitUntil: 'commit', timeout: 60000 });
+    } catch (err) {
+      const download = await downloadPromise;
+      await tab.close().catch(() => {});
+      if (!download) {
+        throw new Error(`Печать не открылась. Ссылка: ${href}. ${err.message}`);
+      }
+      await this.keepDownload(download);
+      this.page = docsPage;
+      await docsPage.bringToFront();
+      await expect(docsPage.locator('#e_doc')).toBeVisible({ timeout: 30000 });
+      return;
+    }
+    const download = await Promise.race([
+      downloadPromise,
+      new Promise((resolve) => setTimeout(() => resolve(null), 1000)),
     ]);
+    if (download) {
+      await this.keepDownload(download);
+      await tab.close().catch(() => {});
+      this.page = docsPage;
+      await docsPage.bringToFront();
+      await expect(docsPage.locator('#e_doc')).toBeVisible({ timeout: 30000 });
+      return;
+    }
+    const body = response ? await response.body().catch(() => Buffer.alloc(0)) : Buffer.alloc(0);
+    await tab.close().catch(() => {});
+    if (!response || !response.ok() || !body.length) {
+      throw new Error(`Печать не открылась. Ссылка: ${href}. Ответ: ${response ? response.status() : 'нет'}`);
+    }
+    this.printDownloaded += 1;
+    console.log('Печать открыта по ссылке:', href, `${body.length} байт`);
+    this.page = docsPage;
+    await docsPage.bringToFront();
+    await expect(docsPage.locator('#e_doc')).toBeVisible({ timeout: 30000 });
+  }
+
+  async keepDownload(download) {
     const filename = download.suggestedFilename();
     const filePath = await download.path();
     if (!filePath) {
@@ -585,23 +699,6 @@ class BronPage {
     return this.page.locator('#e_doc > table > tbody > tr > td:nth-child(4) > a');
   }
 
-  async openBookletTab(link) {
-    await expect(link).toBeVisible({ timeout: 30000 });
-    this.printClicked += 1;
-    const docsPage = this.page;
-    const popupPromise = docsPage.context().waitForEvent('page', { timeout: 60000 });
-    await link.click();
-    const popup = await popupPromise;
-    await popup.waitForLoadState('load', { timeout: 60000 });
-    this.printDownloaded += 1;
-    console.log('Памятка загружена:', popup.url());
-    const wentBack = await popup.goBack({ waitUntil: 'load', timeout: 60000 }).catch(() => null);
-    if (!wentBack && !popup.isClosed()) await popup.close();
-    this.page = docsPage;
-    await this.page.bringToFront();
-    await expect(this.page.locator('#e_doc')).toBeVisible({ timeout: 30000 });
-  }
-
   async downloadAllPrints() {
     const total = await this.printLinks().count();
     if (!total) {
@@ -609,10 +706,7 @@ class BronPage {
     }
     console.log('Кнопок «Печать» в таблице:', total);
     for (let i = 0; i < total; i++) {
-      const link = this.printLinks().nth(i);
-      const isBooklet = await link.evaluate((el) => (el.closest('tr')?.className || '').includes('doccategory-booklet'));
-      if (isBooklet) await this.openBookletTab(link);
-      else await this.downloadPrint(link);
+      await this.downloadPrint(this.printLinks().nth(i));
     }
     if (this.printDownloaded !== total) {
       throw new Error(`Скачано ${this.printDownloaded} из ${total}`);
