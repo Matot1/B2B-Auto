@@ -460,12 +460,17 @@ async function runConstruct(page, context) {
   await removeSecondTourist.waitFor({ state: 'visible', timeout: 30000 });
   page.once('dialog', (dialog) => dialog.accept());
   await removeSecondTourist.click({ force: true });
+  if (await waitCircleAppear(page, 3000)) {
+    await waitLoadersIfAny(page);
+  }
+  await expect.poll(() => page.locator('#ALL_TOURIST > tr').count(), { timeout: 30000 }).toBe(1);
 
   currentStep = 'Редактирование данных туриста';
-  const editTourist = page.locator('#ALL_TOURIST > tr').first().locator('td:nth-child(5) > span');
-  await editTourist.waitFor({ state: 'visible', timeout: 30000 });
-  await editTourist.scrollIntoViewIfNeeded();
-  await editTourist.click({ force: true });
+  await expect(async () => {
+    const editTourist = page.locator('#ALL_TOURIST > tr').first().locator('td:nth-child(5) > span');
+    await editTourist.scrollIntoViewIfNeeded({ timeout: 5000 });
+    await editTourist.click({ force: true, timeout: 5000 });
+  }).toPass({ timeout: 30000 });
 
   currentStep = 'Заполнение фамилии по-латински';
   const lastNameLatin = transliterate(faker.person.lastName()).toUpperCase();
